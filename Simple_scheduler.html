@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Launch Scheduler</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0c0e14; -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
+    textarea, input, button { font-family: inherit; }
+    textarea { box-sizing: border-box; }
+    ::-webkit-scrollbar { height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    const STORAGE_KEY = "launch-scheduler-v2";
+    const FILE_API = !!window.showOpenFilePicker;
+
+    function useIsMobile() {
+      const [m, setM] = useState(window.innerWidth < 640);
+      useEffect(() => { const h = () => setM(window.innerWidth < 640); window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
+      return m;
+    }
+
+    /* ---- File System Access helpers (desktop) ---- */
+    async function pickFileToOpen() {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+          multiple: false,
+        });
+        return handle;
+      } catch { return null; }
+    }
+
+    async function pickFileToCreate() {
+      try {
+        return await window.showSaveFilePicker({
+          suggestedName: "launch-scheduler-data.json",
+          types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+        });
+      } catch { return null; }
+    }
+
+    async function readFromHandle(handle) {
+      try {
+        const file = await handle.getFile();
+        const text = await file.text();
+        if (!text.trim()) return null;
+        return JSON.parse(text);
+      } catch { return null; }
+    }
+
+    async function writeToHandle(handle, data) {
+      try {
+        const writable = await handle.createWritable();
+        await writable.write(JSON.stringify(data, null, 2));
+        await writable.close();
+        return true;
+      } catch(e) { console.error("File write error:", e); return false; }
+    }
+
+    /* ---- Data (clean start) ---- */
+    const INITIAL_STATE = {
+      activeProjectId: "proj_empty",
+      projects: [
+        {
+          id: "proj_empty",
+          title: "My Project",
+          emoji: "📌",
+          categories: []
+        }
+      ]
+    };
+    const PROJECT_EMOJIS = ["🚀","🛒","✈️","📦","🔥","💡","🎨","📊","🔑","🌍","🎯","🏠","📚","🎮","🎵","💼"];
+
+    function loadLS() { try { const r = localStorage.getItem(STORAGE_KEY); if (r) return JSON.parse(r); } catch {} return null; }
+    function saveLS(s) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {} }
+
+    /* ---- Components ---- */
+    function ProgressBar({ value, size = "normal" }) {
+      const h = size === "large" ? 12 : 6;
+      const bg = size === "large" ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.04)";
+      const color = value === 100 ? "#34d399" : value > 60 ? "#a78bfa" : value > 30 ? "#fbbf24" : "#fb923c";
+      return (
+        <div style={{ width: "100%", height: h, borderRadius: 999, overflow: "hidden", background: bg }}>
+          <div style={{ height: h, borderRadius: 999, width: value+"%", background: color, transition: "width 0.5s cubic-bezier(0.4,0,0.2,1), background 0.5s ease" }} />
+        </div>
+      );
+    }
+
+    function getProjectProgress(p) {
+      const t = p.categories.reduce((s,c) => s + c.tasks.length, 0);
+      const d = p.categories.reduce((s,c) => s + c.tasks.filter(x => x.done).length, 0);
+      return t > 0 ? Math.round((d/t)*100) : 0;
+    }
+
+    /* ---- File status bar ---- */
+    function FileBar({ fileHandle, fileName, onOpen, onNew, onDisconnect, mobile }) {
+      const connected = !!fileHandle;
+      return (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8,
+          padding: mobile ? "10px 0" : "8px 0", marginBottom: mobile ? 16 : 20,
+          borderBottom: "1px solid rgba(255,255,255,0.05)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: connected ? "#34d399" : "rgba(255,255,255,0.15)", flexShrink: 0 }} />
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: mobile ? 12 : 11, color: connected ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.25)" }}>
+              {connected ? fileName : "localStorage — browser cache data"}
+            </span>
+          </div>
+          {FILE_API && (
+            <div style={{ display: "flex", gap: 6 }}>
+              {connected ? (
+                <button onClick={onDisconnect} style={{ background: "none", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, color: "rgba(255,255,255,0.25)", fontSize: mobile ? 12 : 11, padding: mobile ? "6px 10px" : "4px 8px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>
+                  disconnect file
+                </button>
+              ) : (
+                <>
+                  <button onClick={onOpen} style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, color: "rgba(255,255,255,0.35)", fontSize: mobile ? 12 : 11, padding: mobile ? "6px 10px" : "4px 8px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>
+                    open file
+                  </button>
+                  <button onClick={onNew} style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, color: "rgba(255,255,255,0.35)", fontSize: mobile ? 12 : 11, padding: mobile ? "6px 10px" : "4px 8px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace" }}>
+                    create file
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function ProjectSwitcher({ projects, activeId, onSwitch, onAdd, onDelete, mobile }) {
+      const [adding, setAdding] = useState(false);
+      const [newName, setNewName] = useState("");
+      const [emojiIdx, setEmojiIdx] = useState(0);
+      const [hoveredProj, setHoveredProj] = useState(null);
+      const handleAdd = () => { if (newName.trim()) { onAdd(newName.trim(), PROJECT_EMOJIS[emojiIdx]); setNewName(""); setAdding(false); } };
+      return (
+        <div style={{ marginBottom: mobile ? 24 : 32 }}>
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.1) transparent", WebkitOverflowScrolling: "touch" }}>
+            {projects.map(p => {
+              const isActive = p.id === activeId;
+              const pct = getProjectProgress(p);
+              const showDel = mobile || hoveredProj === p.id;
+              return (
+                <div key={p.id} style={{ flexShrink: 0, position: "relative" }}
+                  onMouseEnter={() => setHoveredProj(p.id)} onMouseLeave={() => setHoveredProj(null)}>
+                  <button onClick={() => onSwitch(p.id)} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: mobile ? "12px 14px" : "10px 16px", borderRadius: 12,
+                    border: isActive ? "1px solid rgba(167,139,250,0.4)" : "1px solid rgba(255,255,255,0.06)",
+                    background: isActive ? "rgba(167,139,250,0.1)" : "rgba(255,255,255,0.02)",
+                    color: isActive ? "#e2e8f0" : "rgba(255,255,255,0.45)", cursor: "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: mobile ? 15 : 14, fontWeight: isActive ? 600 : 400, whiteSpace: "nowrap",
+                  }}>
+                    <span style={{ fontSize: mobile ? 18 : 16 }}>{p.emoji}</span>
+                    {p.title}
+                    <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: pct === 100 ? "#34d399" : "rgba(255,255,255,0.25)", marginLeft: 2 }}>{pct}%</span>
+                  </button>
+                  {projects.length > 1 && showDel && (
+                    <button onClick={e => { e.stopPropagation(); if(confirm(`Delete "${p.title}"?`)) onDelete(p.id); }}
+                      style={{ position: "absolute", top: -6, right: -6, width: mobile ? 24 : 20, height: mobile ? 24 : 20, borderRadius: "50%", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>×</button>
+                  )}
+                </div>
+              );
+            })}
+            {adding ? (
+              <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
+                <button onClick={() => setEmojiIdx(i => (i+1)%PROJECT_EMOJIS.length)}
+                  style={{ width: mobile?44:40, height: mobile?44:40, borderRadius: 10, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {PROJECT_EMOJIS[emojiIdx]}
+                </button>
+                <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAdd()} placeholder="Name..." autoFocus
+                  style={{ width: 140, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, color: "#e2e8f0", padding: mobile?"12px":"10px 12px", fontSize: 14, outline: "none" }} />
+                <button onClick={handleAdd} style={{ padding: mobile?"12px 16px":"10px 14px", borderRadius: 10, background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", fontSize: 14, cursor: "pointer" }}>OK</button>
+                <button onClick={() => { setAdding(false); setNewName(""); }} style={{ padding: mobile?"12px 14px":"10px 12px", borderRadius: 10, background: "none", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)", fontSize: 14, cursor: "pointer" }}>✕</button>
+              </div>
+            ) : (
+              <button onClick={() => setAdding(true)} style={{ flexShrink: 0, padding: mobile?"12px 14px":"10px 16px", borderRadius: 12, border: "1px dashed rgba(255,255,255,0.1)", background: "transparent", color: "rgba(255,255,255,0.25)", fontSize: 14, cursor: "pointer", whiteSpace: "nowrap" }}>+ project</button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function CategoryCard({ category, onToggle, onDelete, onAdd, onRename, onDeleteCategory, onResetChecks, mobile }) {
+      const [adding, setAdding] = useState(false);
+      const [newTask, setNewTask] = useState("");
+      const [editingName, setEditingName] = useState(false);
+      const [catName, setCatName] = useState(category.name);
+      const [hoveredTask, setHoveredTask] = useState(null);
+      const [cardHovered, setCardHovered] = useState(false);
+      const total = category.tasks.length;
+      const done = category.tasks.filter(t=>t.done).length;
+      const pct = total > 0 ? Math.round((done/total)*100) : 0;
+      const handleAdd = () => { if(newTask.trim()) { onAdd(newTask.trim()); setNewTask(""); setAdding(false); } };
+      const handleRename = () => { if(catName.trim() && catName.trim()!==category.name) onRename(catName.trim()); setEditingName(false); };
+      const showCatDel = mobile || cardHovered;
+
+      return (
+        <div style={{ background: "rgba(255,255,255,0.03)", border: cardHovered?"1px solid rgba(255,255,255,0.12)":"1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: mobile?18:24, transition: "border-color 0.2s ease" }}
+          onMouseEnter={()=>setCardHovered(true)} onMouseLeave={()=>setCardHovered(false)}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: mobile?22:20 }}>{category.emoji}</span>
+              {editingName ? (
+                <input value={catName} onChange={e=>setCatName(e.target.value)} onBlur={handleRename} onKeyDown={e=>e.key==="Enter"&&handleRename()} autoFocus
+                  style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, color: "#e2e8f0", padding: "4px 8px", fontSize: mobile?16:15, fontFamily: "'JetBrains Mono', monospace", outline: "none" }} />
+              ) : (
+                <span onClick={()=>setEditingName(true)} style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, color: "#e2e8f0", fontSize: mobile?16:15, cursor: "pointer", letterSpacing: "0.5px" }}>{category.name}</span>
+              )}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: pct===100?"#34d399":"rgba(255,255,255,0.35)", fontWeight: 500 }}>{done}/{total}</span>
+              {showCatDel && (
+                <button onClick={()=>{if(confirm(`Delete "${category.name}"?`)) onDeleteCategory();}}
+                  style={{ width: mobile?28:20, height: mobile?28:20, borderRadius: 6, background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.2)", color: "#f87171", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>×</button>
+              )}
+            </div>
+          </div>
+          <ProgressBar value={pct} />
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: mobile?2:4 }}>
+            {category.tasks.map(task => {
+              const showDel = mobile || hoveredTask === task.id;
+              return (
+                <div key={task.id}
+                  style={{ display: "flex", alignItems: "center", gap: mobile?14:12, padding: mobile?"12px 8px":"8px 10px", borderRadius: 8, cursor: "pointer", background: hoveredTask===task.id?"rgba(255,255,255,0.03)":"transparent" }}
+                  onMouseEnter={()=>setHoveredTask(task.id)} onMouseLeave={()=>setHoveredTask(null)} onClick={()=>onToggle(task.id)}>
+                  <div style={{ width: mobile?24:20, height: mobile?24:20, borderRadius: 6, border: task.done?"2px solid #34d399":"2px solid rgba(255,255,255,0.15)", background: task.done?"rgba(52,211,153,0.15)":"transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {task.done && <svg width="14" height="14" viewBox="0 0 12 12" fill="none"><path d="M2.5 6L5 8.5L9.5 3.5" stroke="#34d399" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                  </div>
+                  <span style={{ fontSize: mobile?15:14, color: task.done?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.7)", textDecoration: task.done?"line-through":"none", flex: 1, lineHeight: 1.4 }}>{task.text}</span>
+                  {showDel && <button onClick={e=>{e.stopPropagation();onDelete(task.id);}} style={{ color: "rgba(255,255,255,0.25)", background: "none", border: "none", cursor: "pointer", fontSize: mobile?20:16, padding: mobile?"4px 8px":"0 4px", flexShrink: 0 }}>×</button>}
+                </div>
+              );
+            })}
+          </div>
+          {adding ? (
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAdd()} placeholder="New task..." autoFocus
+                style={{ flex: 1, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#e2e8f0", padding: mobile?"12px":"8px 12px", fontSize: mobile?15:13, outline: "none" }} />
+              <button onClick={handleAdd} style={{ background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 8, color: "#a78bfa", padding: mobile?"12px 16px":"8px 14px", fontSize: mobile?15:13, cursor: "pointer" }}>OK</button>
+              <button onClick={()=>{setAdding(false);setNewTask("");}} style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: "rgba(255,255,255,0.3)", padding: mobile?"12px 14px":"8px 12px", fontSize: mobile?15:13, cursor: "pointer" }}>✕</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 12 }}>
+              <button onClick={()=>setAdding(true)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.25)", fontSize: mobile?14:13, cursor: "pointer", padding: "4px 0" }}>+ add task</button>
+              {done > 0 && <button onClick={onResetChecks} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.18)", fontSize: mobile?14:13, cursor: "pointer", padding: "4px 0" }}>↺ reset</button>}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ---- Main App ---- */
+    function App() {
+      const mobile = useIsMobile();
+      const [state, setState] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const fileHandleRef = useRef(null);
+      const [fileName, setFileName] = useState("");
+      const [addingCat, setAddingCat] = useState(false);
+      const [newCatName, setNewCatName] = useState("");
+      const [showImport, setShowImport] = useState(false);
+      const [importText, setImportText] = useState("");
+      const [copied, setCopied] = useState(false);
+      const [editingTitle, setEditingTitle] = useState(false);
+      const [titleDraft, setTitleDraft] = useState("");
+      const [saveStatus, setSaveStatus] = useState("");
+
+      useEffect(() => {
+        const d = loadLS();
+        setState(d || INITIAL_STATE);
+        setLoading(false);
+      }, []);
+
+      const save = useCallback(async (ns) => {
+        setState(ns);
+        saveLS(ns);
+        if (fileHandleRef.current) {
+          const ok = await writeToHandle(fileHandleRef.current, ns);
+          setSaveStatus(ok ? "✓" : "!");
+          setTimeout(() => setSaveStatus(""), 1500);
+        }
+      }, []);
+
+      const handleOpenFile = async () => {
+        const handle = await pickFileToOpen();
+        if (!handle) return;
+        fileHandleRef.current = handle;
+        setFileName(handle.name);
+        const data = await readFromHandle(handle);
+        if (data && data.projects) {
+          setState(data);
+          saveLS(data);
+        } else {
+          await writeToHandle(handle, state);
+        }
+      };
+
+      const handleNewFile = async () => {
+        const handle = await pickFileToCreate();
+        if (!handle) return;
+        fileHandleRef.current = handle;
+        setFileName(handle.name);
+        await writeToHandle(handle, state);
+      };
+
+      const handleDisconnect = () => {
+        fileHandleRef.current = null;
+        setFileName("");
+      };
+
+      const activeProject = state?.projects.find(p => p.id === state.activeProjectId);
+      const updateActiveProject = updater => { save({ ...state, projects: state.projects.map(p => p.id === state.activeProjectId ? updater(p) : p) }); };
+
+      const switchProject = id => save({ ...state, activeProjectId: id });
+      const addProject = (title, emoji) => { const id = "proj_"+Date.now(); save({ ...state, activeProjectId: id, projects: [...state.projects, { id, title, emoji, categories: [] }] }); };
+      const deleteProject = id => { const r = state.projects.filter(p=>p.id!==id); save({ ...state, activeProjectId: id===state.activeProjectId?r[0]?.id:state.activeProjectId, projects: r }); };
+      const renameProject = t => { if(t.trim()) updateActiveProject(p=>({...p, title: t.trim()})); setEditingTitle(false); };
+
+      const toggleTask = (ci,tid) => updateActiveProject(p=>({...p, categories: p.categories.map((c,i)=>i!==ci?c:{...c, tasks: c.tasks.map(t=>t.id===tid?{...t,done:!t.done}:t)})}));
+      const deleteTask = (ci,tid) => updateActiveProject(p=>({...p, categories: p.categories.map((c,i)=>i!==ci?c:{...c, tasks: c.tasks.filter(t=>t.id!==tid)})}));
+      const addTask = (ci,text) => { const id="task_"+Date.now(); updateActiveProject(p=>({...p, categories: p.categories.map((c,i)=>i!==ci?c:{...c, tasks:[...c.tasks,{id,text,done:false}]})})); };
+      const renameCat = (ci,name) => updateActiveProject(p=>({...p, categories: p.categories.map((c,i)=>i!==ci?c:{...c,name})}));
+      const deleteCategory = ci => updateActiveProject(p=>({...p, categories: p.categories.filter((_,i)=>i!==ci)}));
+      const resetChecks = ci => updateActiveProject(p=>({...p, categories: p.categories.map((c,i)=>i!==ci?c:{...c, tasks: c.tasks.map(t=>({...t,done:false}))})}));
+
+      const addCategory = () => {
+        if(!newCatName.trim()) return;
+        const emojis = ["📦","🔥","💡","🚀","🎨","📊","🔑","🌍"];
+        updateActiveProject(p=>({...p, categories:[...p.categories,{name:newCatName.trim(), emoji: emojis[p.categories.length%emojis.length], tasks:[]}]}));
+        setNewCatName(""); setAddingCat(false);
+      };
+
+      const exportToMarkdown = () => {
+        if(!activeProject) return "";
+        let md="# "+activeProject.title+"\n\n";
+        for(const cat of activeProject.categories){md+="## "+cat.name+"\n"; for(const t of cat.tasks) md+=(t.done?"- [x] ":"- [ ] ")+t.text+"\n"; md+="\n";}
+        return md.trim();
+      };
+
+      // File-based export/import for mobile & desktop
+      const exportToMarkdownFile = () => {
+        const md = exportToMarkdown();
+        const blob = new Blob([md], { type: "text/markdown" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${activeProject.title.replace(/[^a-z0-9]/gi, '_')}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      const importFromMarkdownFile = (file) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const markdown = e.target.result;
+          const lines = markdown.split("\n");
+          const categories = [];
+          let cur = null;
+          const emojis = ["📦","🔥","💡","🚀","🎨","📊","🔑","🌍","🎯","⚙️","🤖","📣"];
+          let ci = 0;
+          for (const line of lines) {
+            const tr = line.trim();
+            const cm = tr.match(/^#{1,2}\s+(.+)/);
+            if (cm) {
+              cur = { name: cm[1].trim(), emoji: emojis[ci % emojis.length], tasks: [] };
+              categories.push(cur);
+              ci++;
+              continue;
+            }
+            const tm = tr.match(/^-\s*\[([ xX])\]\s+(.+)/);
+            if (tm && cur) {
+              cur.tasks.push({ id: "t_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), text: tm[2].trim(), done: tm[1].toLowerCase() === "x" });
+              continue;
+            }
+            const pm = tr.match(/^-\s+(.+)/);
+            if (pm && cur) {
+              cur.tasks.push({ id: "t_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), text: pm[1].trim(), done: false });
+            }
+          }
+          if (categories.length > 0) {
+            updateActiveProject(p => ({ ...p, categories }));
+            alert("Import completed");
+          } else {
+            alert("Could not parse Markdown");
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      const exportAllToJSON = () => {
+        const data = { activeProjectId: state.activeProjectId, projects: state.projects };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "launch-scheduler-backup.json";
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      const importFromJSONFile = (file) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = JSON.parse(e.target.result);
+            if (data.projects && data.activeProjectId) {
+              save(data);
+              alert("Restore completed");
+            } else {
+              alert("Invalid JSON format");
+            }
+          } catch {
+            alert("Error reading file");
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      const handleExport = async () => {
+        const md = exportToMarkdown();
+        try { await navigator.clipboard.writeText(md); setCopied(true); setTimeout(()=>setCopied(false),2000); }
+        catch { setShowImport(true); setImportText(md); }
+      };
+
+      const handleImport = () => {
+        const lines=importText.split("\n"); const categories=[]; let cur=null;
+        const emojis=["📦","🔥","💡","🚀","🎨","📊","🔑","🌍","🎯","⚙️","🤖","📣"]; let ci=0;
+        for(const line of lines){
+          const tr=line.trim();
+          const cm=tr.match(/^#{1,2}\s+(.+)/);
+          if(cm){cur={name:cm[1].trim(),emoji:emojis[ci%emojis.length],tasks:[]};categories.push(cur);ci++;continue;}
+          const tm=tr.match(/^-\s*\[([ xX])\]\s+(.+)/);
+          if(tm&&cur){cur.tasks.push({id:"t_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),text:tm[2].trim(),done:tm[1].toLowerCase()==="x"});continue;}
+          const pm=tr.match(/^-\s+(.+)/);
+          if(pm&&cur){cur.tasks.push({id:"t_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),text:pm[1].trim(),done:false});}
+        }
+        if(categories.length>0){updateActiveProject(p=>({...p,categories}));setShowImport(false);setImportText("");}
+      };
+
+      const resetAll = () => { if(confirm("Reset ALL projects?")) save(INITIAL_STATE); };
+
+      if(loading || !state) return (
+        <div style={{ minHeight: "100vh", background: "#0c0e14", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ color: "rgba(255,255,255,0.3)", fontFamily: "'JetBrains Mono', monospace" }}>Loading...</span>
+        </div>
+      );
+
+      const totalTasks = activeProject?.categories.reduce((s,c)=>s+c.tasks.length,0)||0;
+      const totalDone = activeProject?.categories.reduce((s,c)=>s+c.tasks.filter(t=>t.done).length,0)||0;
+      const totalPct = totalTasks>0?Math.round((totalDone/totalTasks)*100):0;
+
+      return (
+        <div style={{ minHeight: "100vh", background: "#0c0e14", color: "#e2e8f0", fontFamily: "'DM Sans', sans-serif" }}>
+          <div style={{ maxWidth: 720, margin: "0 auto", padding: mobile?"28px 16px 60px":"48px 20px 80px" }}>
+
+            <FileBar fileHandle={fileHandleRef.current} fileName={fileName + (saveStatus ? " "+saveStatus : "")} onOpen={handleOpenFile} onNew={handleNewFile} onDisconnect={handleDisconnect} mobile={mobile} />
+
+            <ProjectSwitcher projects={state.projects} activeId={state.activeProjectId} onSwitch={switchProject} onAdd={addProject} onDelete={deleteProject} mobile={mobile} />
+
+            {activeProject && (
+              <>
+                <div style={{ marginBottom: mobile?28:40 }}>
+                  <div style={{ display: "flex", alignItems: mobile?"flex-start":"center", justifyContent: "space-between", flexDirection: mobile?"column":"row", gap: mobile?14:0 }}>
+                    <h1 style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: mobile?22:28, letterSpacing: "-0.5px", color: "#f1f5f9", margin: 0, display: "flex", alignItems: "center", gap: 10 }}>
+                      <span>{activeProject.emoji}</span>
+                      {editingTitle ? (
+                        <input value={titleDraft} onChange={e=>setTitleDraft(e.target.value)} onBlur={()=>renameProject(titleDraft)} onKeyDown={e=>e.key==="Enter"&&renameProject(titleDraft)} autoFocus
+                          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 8, color: "#f1f5f9", padding: "2px 10px", fontSize: mobile?22:28, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, outline: "none", width: "100%" }} />
+                      ) : (
+                        <span onClick={()=>{setEditingTitle(true);setTitleDraft(activeProject.title);}} style={{ cursor: "pointer" }}>{activeProject.title}</span>
+                      )}
+                    </h1>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={handleExport} style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: copied?"#34d399":"rgba(255,255,255,0.3)", fontSize: mobile?13:12, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", padding: mobile?"8px 12px":"6px 10px" }}>
+                        {copied?"✓ copied":"Copy project"}
+                      </button>
+                      <button onClick={()=>{setShowImport(true);setImportText("");}} style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: "rgba(255,255,255,0.3)", fontSize: mobile?13:12, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", padding: mobile?"8px 12px":"6px 10px" }}>
+                        Insert project
+                      </button>
+                      <button onClick={exportToMarkdownFile} style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: "rgba(255,255,255,0.3)", fontSize: mobile?13:12, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", padding: mobile?"8px 12px":"6px 10px" }}>
+                        Save project
+                      </button>
+                      <label style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: "rgba(255,255,255,0.3)", fontSize: mobile?13:12, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", padding: mobile?"8px 12px":"6px 10px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        Load project
+                        <input type="file" accept=".md,.markdown" style={{ display: "none" }} onChange={e => { if(e.target.files[0]) importFromMarkdownFile(e.target.files[0]); e.target.value = ""; }} />
+                      </label>
+                      <button onClick={exportAllToJSON} style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: "rgba(255,255,255,0.3)", fontSize: mobile?13:12, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", padding: mobile?"8px 12px":"6px 10px" }}>
+                        Save backup
+                      </button>
+                      <label style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: "rgba(255,255,255,0.3)", fontSize: mobile?13:12, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", padding: mobile?"8px 12px":"6px 10px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        Import backup
+                        <input type="file" accept=".json" style={{ display: "none" }} onChange={e => { if(e.target.files[0]) importFromJSONFile(e.target.files[0]); e.target.value = ""; }} />
+                      </label>
+                      <button onClick={resetAll} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.15)", fontSize: mobile?13:12, cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", padding: mobile?"8px 4px":"6px 0" }}>reset</button>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: mobile?20:24 }}>
+                    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: mobile?40:48, fontWeight: 700, lineHeight: 1, color: totalPct===100?"#34d399":totalPct>60?"#a78bfa":"#f1f5f9" }}>{totalPct}%</span>
+                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: "rgba(255,255,255,0.3)" }}>{totalDone} of {totalTasks}</span>
+                    </div>
+                    <ProgressBar value={totalPct} size="large" />
+                  </div>
+                </div>
+
+                {showImport && (
+                  <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(167,139,250,0.2)", borderRadius: 16, padding: mobile?16:20, marginBottom: 24 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Paste Markdown</span>
+                      <button onClick={()=>setShowImport(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer", padding: "4px 8px" }}>✕</button>
+                    </div>
+                    <textarea value={importText} onChange={e=>setImportText(e.target.value)}
+                      placeholder={"## Category\n- [ ] Task\n- [x] Done"}
+                      style={{ width: "100%", minHeight: mobile?140:160, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, color: "#e2e8f0", padding: 12, fontSize: mobile?14:13, fontFamily: "'JetBrains Mono', monospace", outline: "none", resize: "vertical", lineHeight: 1.6 }} />
+                    <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                      <button onClick={handleImport} disabled={!importText.trim()}
+                        style={{ padding: mobile?"12px 20px":"10px 20px", borderRadius: 10, background: importText.trim()?"rgba(167,139,250,0.15)":"rgba(255,255,255,0.02)", border: importText.trim()?"1px solid rgba(167,139,250,0.3)":"1px solid rgba(255,255,255,0.05)", color: importText.trim()?"#a78bfa":"rgba(255,255,255,0.15)", fontSize: mobile?14:13, cursor: importText.trim()?"pointer":"default", fontFamily: "'JetBrains Mono', monospace" }}>
+                        Import
+                      </button>
+                      <button onClick={()=>setShowImport(false)} style={{ padding: mobile?"12px 16px":"10px 16px", borderRadius: 10, background: "none", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)", fontSize: mobile?14:13, cursor: "pointer" }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                  {activeProject.categories.map((cat,i) => (
+                    <CategoryCard key={cat.name+i} category={cat} mobile={mobile}
+                      onToggle={tid=>toggleTask(i,tid)} onDelete={tid=>deleteTask(i,tid)}
+                      onAdd={text=>addTask(i,text)} onRename={name=>renameCat(i,name)}
+                      onDeleteCategory={()=>deleteCategory(i)} onResetChecks={()=>resetChecks(i)} />
+                  ))}
+                </div>
+
+                <div style={{ marginTop: 24 }}>
+                  {addingCat ? (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input value={newCatName} onChange={e=>setNewCatName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCategory()} placeholder="New category..." autoFocus
+                        style={{ flex: 1, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#e2e8f0", padding: mobile?"14px 16px":"12px 16px", fontSize: mobile?15:14, outline: "none" }} />
+                      <button onClick={addCategory} style={{ background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 12, color: "#a78bfa", padding: mobile?"14px 18px":"12px 20px", fontSize: mobile?15:14, cursor: "pointer" }}>OK</button>
+                      <button onClick={()=>{setAddingCat(false);setNewCatName("");}} style={{ background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, color: "rgba(255,255,255,0.3)", padding: mobile?"14px 16px":"12px 16px", fontSize: mobile?15:14, cursor: "pointer" }}>✕</button>
+                    </div>
+                  ) : (
+                    <button onClick={()=>setAddingCat(true)}
+                      style={{ width: "100%", padding: mobile?18:16, borderRadius: 16, border: "1px dashed rgba(255,255,255,0.08)", background: "transparent", color: "rgba(255,255,255,0.2)", fontSize: mobile?15:14, cursor: "pointer" }}>
+                      + new category
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
