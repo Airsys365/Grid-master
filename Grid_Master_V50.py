@@ -2,7 +2,6 @@ import os
 import math
 import json
 import logging
-import platform
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
@@ -12,8 +11,6 @@ import pandas as pd
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Alignment
-from openpyxl.styles import PatternFill
 import customtkinter as ctk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -67,10 +64,32 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+
+# =============================
+# Безопасный парсинг чисел из UI/файлов
+# =============================
+def parse_num(value, default=0.0):
+    """Превращает значение в float, поддерживая запятую и пробелы."""
+    try:
+        return float(str(value).strip().replace(",", "."))
+    except Exception:
+        return float(default)
+
+
+def parse_int_mm(value, default=0):
+    """Превращает значение в целое (мм/количество); терпит '1500.5', '1 500', ''."""
+    s = str(value).strip().replace(",", ".").replace(" ", "")
+    if s == "":
+        return int(default)
+    try:
+        return int(round(float(s)))
+    except Exception:
+        return int(default)
+
+
 # =============================
 # Данные проекта
 # =============================
-from dataclasses import dataclass
 
 @dataclass
 class ProjectPart:
@@ -93,7 +112,7 @@ class ProjectPart:
 class GridMasterInterface:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Grid Master V.4 ©Viiptag")
+        self.root.title("Grid Master V.5.0 ©Viiptag")
         self.root.geometry("1200x800")
         self._tv_to_part: dict[str, ProjectPart] = {}
         self._part_editor_win = None
@@ -137,14 +156,12 @@ class GridMasterInterface:
         self.load_all_data()
         self.refresh_all_tables()
         self._refresh_article_combobox()
-        #self.load_last_project()
 
         # События и завершение
         self.setup_shortcuts()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
     def _set_project_name_from_file(self, file_path: str):
-        import os
         try:
             base = os.path.splitext(os.path.basename(file_path))[0]
             self.project_name_entry.delete(0, "end")
@@ -153,39 +170,6 @@ class GridMasterInterface:
             self.save_config()
         except Exception:
             pass
-
-        
-    def _init_default_values(self):
-        """
-        НЕ пересоздает self.material_entries.
-        Только подставляет дефолтные значения в уже созданные Entry,
-        если они пустые.
-        """
-        try:
-            entries = getattr(self, "material_entries", None)
-            if not entries:
-                return  # словарь еще не инициализирован UI — ничего не делаем
-
-            defaults = {"frame": "0.79", "angle": "2.0", "bumper": "0.79", "work": "30.0"}
-            for key, entry in entries.items():
-                try:
-                    cur = (entry.get() or "").strip()
-                except Exception:
-                    continue
-                if cur == "":
-                    entry.insert(0, defaults.get(key, "0.0"))
-
-            if hasattr(self, "zinc_entry"):
-                if not (self.zinc_entry.get() or "").strip():
-                    self.zinc_entry.insert(0, "0.6")
-            if hasattr(self, "frame_coef_entry"):
-                if not (self.frame_coef_entry.get() or "").strip():
-                    self.frame_coef_entry.insert(0, "1.05")
-        except Exception as e:
-            logging.error(f"_init_default_values error: {e}")
-
-        
-        
 
     # =============================
     # UI
@@ -285,18 +269,6 @@ class GridMasterInterface:
         self.mats_count_entry = ctk.CTkEntry(left_col, width=90)
         self.mats_count_entry.insert(0, "0")
         self.mats_count_entry.grid(row=2, column=1, sticky='w', padx=5, pady=4)
-        
-        
-        def _update_mats_count_effective(*_):
-            s = (self.mats_count_entry.get() or "").strip().replace(",", ".")
-            try:
-                base = float(s)
-            except Exception:
-                base = 0.0
-            eff = round(base * 1.15, 1)
-            self.mats_count_effective_var.set(f"с запасом: {eff}")
-
-        
 
         self.manual_mats_var = tk.BooleanVar(value=False)
         ctk.CTkCheckBox(left_col, text="Ввести вручную", variable=self.manual_mats_var,
@@ -398,10 +370,6 @@ class GridMasterInterface:
         ctk.CTkLabel(row2, text="Коэф. обрамления:").pack(side='left', padx=(0, 5))
         self.frame_coef_entry = ctk.CTkEntry(row2, width=70); self.frame_coef_entry.insert(0, "1.05")
         self.frame_coef_entry.pack(side='left', padx=(0, 15))
-        
-        # Чекбокс "Вычитать отбойник" теперь здесь
-        self.subtract_bumper_var = tk.BooleanVar(value=True)
-        
 
     def setup_add_part_frame(self):
         add_frame = ctk.CTkFrame(self.project_tab)
@@ -774,21 +742,7 @@ class GridMasterInterface:
     def _calc_mat_area_used(self, rects) -> float:
         """Сумма площадей деталей на мате."""
         return sum((d["length"] * d["width"]) for d in rects)
-        
-    def _mats_count_for_export(self) -> float:
-        """Количество матов для Excel: БЕЗ +15%, 1 знак после запятой."""
-        # 1) напрямую из поля
-        try:
-            s = (self.mats_count_entry.get() or "").strip().replace(",", ".")
-            if s != "":
-                return round(float(s), 1)
-        except Exception:
-            pass
-        # 2) иначе — как считает функция выше (тоже без +15%)
-        try:
-            return round(float(getattr(self, "calculate_mats_count", lambda: 0.0)()), 1)
-        except Exception:
-            return 0.0
+
     def _fraction_from_ratio(self, ratio: float) -> float:
         """
         Применяет критерий:
@@ -801,61 +755,6 @@ class GridMasterInterface:
         if ratio < 0.1:
             return 0.0
         return round(ratio, 1)
-                
-
-        def save_changes():
-            try:
-                part.position = entries["Позиция"].get().strip()
-                part.length   = _to_int_mm(entries["Длина (мм)"].get())
-                part.width    = _to_int_mm(entries["Ширина (мм)"].get())
-                part.quantity = _to_int_mm(entries["Кол-во"].get() or "1")
-                part.angle    = entries["Перфоугол"].get().strip()
-                part.bumper   = _to_int_mm(entries["Отбойник"].get())
-                part.work     = _to_float1(entries["Работа (ч)"].get())
-                part.radius   = _to_int_mm(entries["Радиус (мм)"].get())
-
-                # доля окружности
-                rp_s = (entries["Доля окружности"].get() or "1.0").replace(",", ".")
-                part.radius_part = float(rp_s)
-
-                # Пересчеты
-                try:
-                    bumper_val = float(part.bumper)
-                except Exception:
-                    bumper_val = 0.0
-
-                linear_mm, total_bumper_mm = self.calculate_bumper_lengths(bumper_val, part.radius, part.radius_part)
-                part.bumper_length = round(total_bumper_mm / 1000, 2)
-
-                per_mm = (2 * part.width + part.length) if part.width < 1000 else (2 * part.width)
-                if part.bumper and self.subtract_bumper_var.get():
-                    per_mm -= linear_mm
-                part.perimeter = max(0, round(per_mm / 1000, 2))
-
-                # Обновляем строку в таблице
-                area = (part.length * part.width) / 1_000_000
-                self.parts_table.item(row_iid, values=(
-                    part.position,
-                    f"{part.length:.0f}", f"{part.width:.0f}", part.quantity,
-                    f"{area:.3f}".replace('.', ','), f"{part.perimeter:.2f}".replace('.', ','),
-                    part.angle, part.bumper,
-                    f"{part.work:.1f}".replace('.', ','), f"{part.radius:.0f}" if part.radius else "",
-                    f"{part.bumper_length:.2f}" if part.bumper_length > 0 else "0.00"
-                ))
-
-                self.recalculate_project()
-                _on_close()
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Некорректные данные: {e}")
-
-        # ---- 5) Кнопки — НА СЛЕДУЮЩЕЙ строке ----
-        row_buttons = row_base + 1
-        btns = ttk.Frame(win)
-        btns.grid(row=row_buttons, column=0, columnspan=2, padx=8, pady=(10, 10), sticky="e")
-        ttk.Button(btns, text="Сохранить", command=save_changes).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(btns, text="Отмена", command=_on_close).grid(row=0, column=1)
-        win.bind("<Return>", lambda e: save_changes())
-        win.bind("<Escape>", lambda e: _on_close())
 
     def remove_selected_part(self):
         sel = self.parts_table.selection()
@@ -1006,18 +905,13 @@ class GridMasterInterface:
         frame.grid_columnconfigure(0, weight=1)
         setattr(self, f"{title}_table", table)
 
-        # ⬇️ ВАЖНО: включаем инлайн-редактирование для таблицы «Цены»
-        if title == "Цены":
-            table.bind('<Double-1>', lambda e, t=table: self.edit_price_cell(e, t))
-    
-        
     def edit_mat_cell(self, event):
         region = self.mat_table.identify("region", event.x, event.y)
         if region != "cell":
             return
 
         column = self.mat_table.identify_column(event.x)
-        if column != "#4":  # Только редактируем "Цена мата"
+        if column != "#3":  # Только редактируем "Цена мата" (3-я колонка)
             return
 
         row_id = self.mat_table.identify_row(event.y)
@@ -1026,8 +920,8 @@ class GridMasterInterface:
 
         x, y, w, h = self.mat_table.bbox(row_id, column)
         current_values = list(self.mat_table.item(row_id, "values"))
-        col_index = int(column[1:]) - 1  # 3 для "Цена мата"
-        current_value = current_values[col_index]
+        # columns: 0 Артикул, 1 Ячейка, 2 Цена мата, 3 Вес мата, 4 Цена м², 5 Вес м², 6 Длина мата
+        current_value = current_values[2]
 
         entry = ttk.Entry(self.mat_table)
         entry.insert(0, str(current_value))
@@ -1038,14 +932,18 @@ class GridMasterInterface:
         def commit():
             try:
                 new_price = float(str(entry.get()).replace(",", "."))
-                new_price_m2 = round(new_price / 6.1, 2)
             except ValueError:
                 messagebox.showerror("Ошибка", "Введите корректное число")
                 return
 
-            # Обновляем видимые данные
-            current_values[3] = f"{new_price:.2f}"
-            current_values[5] = f"{new_price_m2:.2f}"
+            # Площадь мата из колонки "Длина мата" (ширина мата принимается за 1 м)
+            mat_len_mm = parse_num(current_values[6] if len(current_values) > 6 else 6100, 6100.0)
+            area_m2 = (mat_len_mm / 1000.0) or 6.1
+            new_price_m2 = round(new_price / area_m2, 2)
+
+            # Обновляем видимые данные (формат с запятой — как в refresh_mat_table)
+            current_values[2] = f"{new_price:.2f}".replace('.', ',')
+            current_values[4] = f"{new_price_m2:.2f}".replace('.', ',')
             self.mat_table.item(row_id, values=current_values)
             entry.destroy()
 
@@ -1249,24 +1147,6 @@ class GridMasterInterface:
         draw(0)
 
 
-    def update_material_prices(self, table: ttk.Treeview):
-        """Перечитывает цены из таблицы «Цены» в self.material_prices"""
-        rows = []
-        for iid in table.get_children():
-            values = table.item(iid, "values")
-            if not values:
-                continue
-            name = str(values[0])
-            try:
-                price = float(str(values[1]).replace(",", "."))
-            except Exception:
-                price = 0.0
-            unit = str(values[2]) if len(values) > 2 else ""
-            rows.append((name, price, unit))
-        if rows:
-            self.material_prices = rows
-
-
     def setup_status_bar(self):
         self.status_var = tk.StringVar(value="Готов к работе")
         status_bar = ctk.CTkLabel(self.root, textvariable=self.status_var, anchor='w')
@@ -1286,6 +1166,18 @@ class GridMasterInterface:
         except Exception as e:
             logging.error(f"Theme switch error: {e}")
             messagebox.showerror("Ошибка", f"Не удалось применить тему: {e}")
+
+    def _sync_theme_switch(self):
+        """Приводит положение переключателя темы в соответствие с self.ui_theme."""
+        if not hasattr(self, "theme_switch"):
+            return
+        try:
+            if getattr(self, "ui_theme", "dark") == "light":
+                self.theme_switch.select()
+            else:
+                self.theme_switch.deselect()
+        except Exception:
+            pass
 
     # =============================
     # Загрузка/сохранение данных и таблиц
@@ -1318,7 +1210,8 @@ class GridMasterInterface:
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     cfg = json.load(f)                    
                     self.mat_data = cfg.get("mat_data", [])
-                    self.material_prices = cfg.get("material_prices", self.get_default_material_prices())
+                    mp = cfg.get("material_prices")
+                    self.material_prices = mp if (isinstance(mp, list) and mp) else self.get_default_material_prices()
                     self.frame_weights = cfg.get("frame_weights", self.get_default_frame_weights())
                     self.angle_weights = cfg.get("angle_weights", self.get_default_angle_weights())
                     self.bumper_weights = cfg.get("bumper_weights", self.get_default_bumper_weights())
@@ -1330,23 +1223,21 @@ class GridMasterInterface:
                     except Exception:
                         ctk.set_appearance_mode("dark")
                         self.ui_theme = "dark"
+                    self._sync_theme_switch()
              # >>> НОРМАЛИЗАЦИЯ ПОСЛЕ ЗАГРУЗКИ КОНФИГА
             for m in self.mat_data:
-                try:
-                    price = float(m.get("Цена мата", 0) or 0)
-                    weight = float(m.get("Вес мата", 0) or 0)
-                except Exception:
-                    price = 0.0; weight = 0.0
-                try:
-                    m["Длина мата"] = float(m.get("Длина мата", 6100) or 6100)
-                except Exception:
-                    m["Длина мата"] = 6100.0
-                if price > 0:
-                    m["Цена м²"] = round(price / 6.1, 2)
-                if weight > 0:
-                    m["Вес м²"]  = round(weight / 6.1, 3)
-                self.save_config()    
-            # <<< НОРМАЛИЗАЦИЯ       
+                price = parse_num(m.get("Цена мата", 0), 0.0)
+                weight = parse_num(m.get("Вес мата", 0), 0.0)
+                mat_len_mm = parse_num(m.get("Длина мата", 6100), 6100.0)
+                m["Длина мата"] = mat_len_mm
+                # площадь мата: длина (м) × 1 м ширины; запасной вариант 6.1 м²
+                area_m2 = (mat_len_mm / 1000.0) or 6.1
+                # Заполняем м² ТОЛЬКО если значения нет — импортированные не пересчитываем
+                if parse_num(m.get("Цена м²", 0), 0.0) <= 0 and price > 0:
+                    m["Цена м²"] = round(price / area_m2, 2)
+                if parse_num(m.get("Вес м²", 0), 0.0) <= 0 and weight > 0:
+                    m["Вес м²"] = round(weight / area_m2, 3)
+            # <<< НОРМАЛИЗАЦИЯ
             # если не было в конфиге — подгрузим дефолт/файлы
             if not self.material_prices:
                 self.material_prices = self.get_default_material_prices()
@@ -1365,13 +1256,13 @@ class GridMasterInterface:
         try:
             cfg = {
                 "mat_data": self.mat_data,
-                "material_prices": {
+                "material_prices": self.material_prices if isinstance(self.material_prices, list) else self.get_default_material_prices(),
+                "material_entry_prices": {
                     "frame": self.material_entries["frame"].get() if "frame" in self.material_entries else "",
                     "angle": self.material_entries["angle"].get() if "angle" in self.material_entries else "",
                     "bumper": self.material_entries["bumper"].get() if "bumper" in self.material_entries else "",
                     "work": self.material_entries["work"].get() if "work" in self.material_entries else ""
                 },
-              
                 "frame_weights": self.frame_weights,
                 "angle_weights": self.angle_weights,
                 "bumper_weights": self.bumper_weights,
@@ -1609,20 +1500,20 @@ class GridMasterInterface:
             position = self.part_entries['позиция'].get().strip()
             if not position:
                 messagebox.showerror("Ошибка", "Поле «Позиция» обязательно для заполнения.")
-                self.position_entry.focus_set()
+                self.part_entries['позиция'].focus_set()
                 return
             for part in self.project_parts:
                 if part.position == position:
                     messagebox.showwarning("Дубликат позиции", f"Деталь с позицией «{position}» уже существует.")
                     return
 
-            length = int(self.part_entries['длина'].get() or 0)
-            width = int(self.part_entries['ширина'].get() or 0)
-            quantity = int(self.part_entries['кол-во'].get() or 1)
+            length = parse_int_mm(self.part_entries['длина'].get())
+            width = parse_int_mm(self.part_entries['ширина'].get())
+            quantity = parse_int_mm(self.part_entries['кол-во'].get(), 1)
             angle = self.part_entries['перфоугол'].get().strip()
-            bumper = int(self.part_entries['отбойник'].get() or 0)
-            work = float(self.part_entries['работа'].get() or 0)
-            radius = int(self.part_entries['радиус'].get() or 0)
+            bumper = parse_int_mm(self.part_entries['отбойник'].get())
+            work = parse_num(self.part_entries['работа'].get(), 0.0)
+            radius = parse_int_mm(self.part_entries['радиус'].get())
             subtract_bumper = self.subtract_bumper_checkbox.get()  # Получаем состояние чекбокса
 
             # Получаем долю окружности
@@ -1686,9 +1577,6 @@ class GridMasterInterface:
             self._tv_to_part[iid] = p
 
 
-    def edit_selected_part(self, event=None):
-        messagebox.showinfo("Инфо", "Редактор деталей не реализован в этой сборке. Удалите и добавьте деталь заново.")
-
     def clear_part_fields(self):
         for e in self.part_entries.values():
             if isinstance(e, (ctk.CTkEntry, ctk.CTkComboBox)):
@@ -1749,8 +1637,6 @@ class GridMasterInterface:
 
             
     def calculate_bumper_lengths(self, bumper_mm, radius, radius_part=1.0) -> Tuple[float, float]:
-        import math
-
         # Преобразуем входные значения в числа
         try:
             bumper_mm = float(bumper_mm)
@@ -1834,24 +1720,7 @@ class GridMasterInterface:
                 except Exception:
                     return 0.0
         return 0.0
-            
-    
-    def _get_mats_count_for_cost(self) -> float:
-        """
-        Возвращает количество матов для РАСЧЁТА СТОИМОСТИ:
-        - ручной режим (manual_mats_var = True): ровно введённое число;
-        - авто-режим: введённое/посчитанное число × 1.15 (без округления).
-        """
-        raw = (self.mats_count_entry.get() or "").strip().replace(",", ".")
-        try:
-            base = float(raw)
-        except Exception:
-            base = 0.0
 
-        manual = getattr(self, "manual_mats_var", None)
-        is_manual = bool(manual.get()) if manual is not None else False
-        return base if is_manual else (base * 1.15)
-        
     def calculate_mat_cost(self) -> float:
         """
         Себестоимость матов = (кол-во × K) × (площадь листа, м² × цена м²).
@@ -1907,7 +1776,7 @@ class GridMasterInterface:
 
     def calculate_bumper_cost(self) -> float:
         try:
-            if not any(p.bumper > 0 for p in self.project_parts):
+            if not any(parse_num(p.bumper) > 0 for p in self.project_parts):
                 return 0.0
                 
             type_name = self._combo_get("Отбойник")
@@ -1941,14 +1810,18 @@ class GridMasterInterface:
         
 
     def calculate_total_weight(self) -> float:
-        # Вес Решетки (маты) по площади
-        mats_w = self.calculate_total_weight_mats_only()
-        frame_w  = self.calculate_frame_weight_only()
-        angle_w = self.calculate_angle_length_m() * self._weight_per_m(self.angle_weights, self._combo_get("Перфоуголок"))
-        bumper_w = self.calculate_bumper_length_m() * self._weight_per_m(self.bumper_weights, self._combo_get("Отбойник"))
+        try:
+            # Вес Решетки (маты) по площади
+            mats_w = self.calculate_total_weight_mats_only()
+            frame_w  = self.calculate_frame_weight_only()
+            angle_w = self.calculate_angle_length_m() * self._weight_per_m(self.angle_weights, self._combo_get("Перфоуголок"))
+            bumper_w = self.calculate_bumper_length_m() * self._weight_per_m(self.bumper_weights, self._combo_get("Отбойник"))
 
-        total = mats_w + frame_w + angle_w + bumper_w
-        return round(total, 2)
+            total = mats_w + frame_w + angle_w + bumper_w
+            return round(total, 2)
+        except Exception:
+            logging.exception("calculate_total_weight error")
+            return 0.0
         
     def calculate_total_weight_with_zinc(self) -> float:
         """Возвращает вес с учетом +10% для цинкования."""
@@ -1957,7 +1830,9 @@ class GridMasterInterface:
 
     def update_cost_table(self, total_cost: float):
         self.cost_table.delete(*self.cost_table.get_children())
-        self.cost_table.insert('', 'end', values=("Маты + 15%", f"{self.calculate_mat_cost():.2f}".replace('.', ',')))
+        manual = getattr(self, "manual_mats_var", None)
+        mats_label = "Маты" if (manual and manual.get()) else "Маты + 15%"
+        self.cost_table.insert('', 'end', values=(mats_label, f"{self.calculate_mat_cost():.2f}".replace('.', ',')))
         self.cost_table.insert('', 'end', values=("Обрамление", f"{self.calculate_frame_cost():.2f}".replace('.', ',')))
         angle_pieces = self.calculate_angle_piece_count()
         angle_cost = self.calculate_angle_cost()
@@ -2013,7 +1888,7 @@ class GridMasterInterface:
 
     def calculate_bumper_weight_only(self) -> float:
         # Проверяем, есть ли детали с отбойником
-        if not any(p.bumper > 0 for p in self.project_parts):
+        if not any(parse_num(p.bumper) > 0 for p in self.project_parts):
             return 0.0
         return round(self.calculate_bumper_length_m() * self._weight_per_m(self.bumper_weights, self._combo_get("Отбойник")), 2)
 
@@ -2056,19 +1931,6 @@ class GridMasterInterface:
         except Exception as e:
             logging.exception("Ошибка в recalculate_project")
             messagebox.showerror("Ошибка", f"Ошибка пересчета: {e}")
-
-            
-    def _validate_data(self) -> bool:
-        """Проверяет минимально необходимые данные для расчета"""
-        required = [
-            bool(self.project_parts),
-            bool(self.article_cb.get()),
-            bool(self.mats_count_entry.get()),
-            all(entry.get() for entry in self.material_entries.values())
-        ]
-        return all(required)
-        
-    
 
     # =============================
     # Проекты (сохранение/загрузка)
@@ -2161,15 +2023,18 @@ class GridMasterInterface:
                     # Загрузка темы интерфейса
                     self.ui_theme = cfg.get(THEME_KEY, "dark")
                     ctk.set_appearance_mode(self.ui_theme)
-                    
-                    # Загрузка цен материалов
-                    if 'material_prices' in cfg:
-                        prices = cfg['material_prices']
-                        if hasattr(self, 'material_entries'):
-                            for key, entry in self.material_entries.items():
-                                if key in prices:
-                                    entry.delete(0, 'end')
-                                    entry.insert(0, str(prices[key]))
+                    self._sync_theme_switch()
+
+                    # Загрузка цен материалов (новый ключ + совместимость со старым)
+                    prices = cfg.get('material_entry_prices')
+                    if prices is None:
+                        legacy = cfg.get('material_prices')
+                        prices = legacy if isinstance(legacy, dict) else None
+                    if prices and hasattr(self, 'material_entries'):
+                        for key, entry in self.material_entries.items():
+                            if key in prices:
+                                entry.delete(0, 'end')
+                                entry.insert(0, str(prices[key]))
                     
                     # Загрузка весов материалов
                     self.frame_weights = cfg.get("frame_weights", self.get_default_frame_weights())
@@ -2200,7 +2065,6 @@ class GridMasterInterface:
 
             # Обновим таблицы и комбобоксы размеров
             self.refresh_mat_table()
-            self.refresh_material_table("Цены")
             self.refresh_material_table("Обрамление")
             self.refresh_material_table("Перфоуголок")
             self.refresh_material_table("Отбойник")
@@ -2236,16 +2100,17 @@ class GridMasterInterface:
                     self.project_parts.append(
                         ProjectPart(
                             position=d.get("position", ""),
-                            length=float(d.get("length", 0)),
-                            width=float(d.get("width", 0)),
-                            quantity=int(d.get("quantity", 0)),
+                            length=parse_num(d.get("length", 0)),
+                            width=parse_num(d.get("width", 0)),
+                            quantity=parse_int_mm(d.get("quantity", 0)),
                             angle=d.get("angle", ""),
-                            bumper=d.get("bumper", ""),
-                            work=float(d.get("work", 0)),
-                            radius=float(d.get("radius", 0)),
-                            perimeter=float(d.get("perimeter", 0)),
-                            bumper_length=float(d.get("bumper_length", 0)),
-                            radius_part=float(d.get("radius_part", 1.0)),
+                            bumper=parse_num(d.get("bumper", 0)),
+                            work=parse_num(d.get("work", 0)),
+                            radius=parse_num(d.get("radius", 0)),
+                            perimeter=parse_num(d.get("perimeter", 0)),
+                            bumper_length=parse_num(d.get("bumper_length", 0)),
+                            radius_part=parse_num(d.get("radius_part", 1.0), 1.0),
+                            subtract_bumper=bool(d.get("subtract_bumper", True)),
                         )
                     )
                 except Exception:
@@ -2264,20 +2129,7 @@ class GridMasterInterface:
         except Exception as e:
             logging.error(f"load_project error: {e}")
             messagebox.showerror("Ошибка", f"Не удалось загрузить проект:\n{e}")
-            
-    def load_last_project(self):
-        """Автозагрузка последнего проекта из конфига, если путь существует."""
-        try:
-            if not os.path.exists(CONFIG_FILE):
-                return
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            last_path = cfg.get("last_project")
-            if last_path and os.path.exists(last_path):
-                self.load_project(last_path)
-        except Exception as e:
-            logging.warning(f"load_last_project: {e}")
-    
+
     def on_closing(self):
         answer = ask_yes_no_cancel("Выход", "Вы хотите сохранить проект перед выходом?")
         
@@ -2291,10 +2143,6 @@ class GridMasterInterface:
             self.save_config()
         finally:
             self.root.destroy()
-            
-    def f2s(self, value: float, digits: int = 2) -> str:
-        return f"{value:.{digits}f}".replace('.', ',')
-
 
     # Экспорт Excel
     def export_to_excel(self):
@@ -2317,7 +2165,6 @@ class GridMasterInterface:
             return
 
         # 2) Диалог сохранения. Базовое имя БЕЗ 'Grid'
-        import re, openpyxl
         default_docs = os.path.expanduser("~/Documents")
         initial_dir = self.last_export_dir if (self.last_export_dir and os.path.isdir(self.last_export_dir)) else default_docs
         base_name = f"{project_name}.xlsx"  # было f"{project_name}_Grid.xlsx" — убрали 'Grid'  ← (требование)
@@ -2367,7 +2214,7 @@ class GridMasterInterface:
         def next_sheet_index(book):
             max_idx = 0
             rx_parts = re.compile(r"^Детали(?:_(\d+))?$")
-            rx_calc  = re.compile(r"^Реш[ее]тки(?:_(\d+))?$")  # допускаем 'е' и 'е'
+            rx_calc  = re.compile(r"^Реш[её]тки(?:_(\d+))?$")  # допускаем 'е' и 'ё'
             for t in book.sheetnames:
                 m1 = rx_parts.match(t)
                 m2 = rx_calc.match(t)
@@ -2380,11 +2227,12 @@ class GridMasterInterface:
                 if m2 and not m2.group(1):
                     max_idx = max(max_idx, 1)
             return max(1, max_idx + 1) if (("Детали" in book.sheetnames) or any(re.match(r"^Детали_\d+$", s) for s in book.sheetnames)
-                                           or ("Решетки" in book.sheetnames) or any(re.match(r"^Реш[ее]тки_\d+$", s) for s in book.sheetnames)) else 1
+                                           or ("Решетки" in book.sheetnames) or ("Решётки" in book.sheetnames)
+                                           or any(re.match(r"^Реш[её]тки_\d+$", s) for s in book.sheetnames)) else 1
 
         idx = next_sheet_index(wb)
         ws_parts_name = "Детали" if idx == 1 and ("Детали" not in wb.sheetnames) else f"Детали_{idx}"
-        ws_calc_name  = "Решетки" if idx == 1 and (("Решетки" not in wb.sheetnames) and ("Решетки" not in wb.sheetnames)) else f"Решетки_{idx}"
+        ws_calc_name  = "Решетки" if idx == 1 and ("Решетки" not in wb.sheetnames and "Решётки" not in wb.sheetnames) else f"Решетки_{idx}"
 
         # 5) Создаем лист "Детали" и заполняем (структура как в текущем экспорте)
         from openpyxl.styles import Alignment, Font, Border, Side
@@ -2499,8 +2347,7 @@ class GridMasterInterface:
         ws_calc.append(["Стоимость решеток всего", "", "", "EUR", round(total_cost, 2)])
         ws_calc.append(["Стоимость евро/кг", "", "", "евро/кг", round(cost_per_kg, 2)])
 
-               # Форматирование числовых колонок (как в твоем текущем варианте) :contentReference[oaicite:2]{index=2}
-        from openpyxl.styles import numbers
+        # Форматирование числовых колонок C/E
         for r in range(2, ws_calc.max_row + 1):  # начинаем со 2-й строки, т.к. 1-я — заголовки
             label = ws_calc[f"A{r}"].value
             # Колонка C
@@ -2520,21 +2367,7 @@ class GridMasterInterface:
             e = ws_calc[f"E{r}"]
             if isinstance(e.value, (int, float)):
                 e.number_format = "0.00"
-                    
 
-        # Колонка C: шт/кг/м² — до 3 знаков, но для "Количество матов" — 1 знак
-        from openpyxl.styles import numbers
-        for r in range(3, ws_calc.max_row + 1):
-            if ws_calc[f"A{r}"].value == "Количество матов":
-                ws_calc[f"C{r}"].number_format = "0.0"
-            else:
-                c = ws_calc[f"C{r}"]
-                if isinstance(c.value, (int, float)):
-                    c.number_format = "0.###"
-            e = ws_calc[f"E{r}"]
-            if isinstance(e.value, (int, float)):
-                e.number_format = "0.00"
-                
         # --- автоширина и рамки, как у тебя было ---
         for col in range(1, ws_calc.max_column + 1):
             col_letter = get_column_letter(col)
@@ -2587,7 +2420,6 @@ class GridMasterInterface:
 
         # --- Всегда задаем название проекта из имени выбранного файла ---
         try:
-            import os
             base_name = os.path.splitext(os.path.basename(file_path))[0]
             self.project_name_entry.delete(0, 'end')
             self.project_name_entry.insert(0, base_name)
@@ -2657,21 +2489,20 @@ class GridMasterInterface:
                     quantity = to_int(row.get("Количество", 1))
 
                     angle = str(row.get("Перфоуголок", "")).strip()
-                    bumper = str(row.get("Отбойник", "")).strip()
                     work = to_float(row.get("Работа", 0))
                     radius = to_float(row.get("Радиус", 0))
 
-                    try:
-                        bumper_mm = to_float(row.get("Отбойник", 0), 0.0)
-                    except Exception:
-                        bumper_mm = 0.0
+                    bumper_mm = to_float(row.get("Отбойник", 0), 0.0)
+
+                    # Состояние чекбокса "Вычитать отбойник" из формы добавления детали
+                    subtract_bumper = bool(self.subtract_bumper_checkbox.get())
 
                     linear_mm, total_bumper_mm = self.calculate_bumper_lengths(bumper_mm, radius, 1.0)
                     bumper_len_m = round(total_bumper_mm / 1000.0, 2)
 
                     # Периметр: вычитаем ТОЛЬКО линейный отбойник, если чекбокс включен
                     per_mm = (2 * width + length) if width < 1000 else (2 * width)
-                    if bumper_mm > 0 and self.subtract_bumper_var.get():
+                    if bumper_mm > 0 and subtract_bumper:
                         per_mm -= linear_mm
                     per_m = max(0.0, round(per_mm / 1000.0, 2))
 
@@ -2685,7 +2516,9 @@ class GridMasterInterface:
                         work=work,
                         radius=radius,
                         perimeter=per_m,
-                        bumper_length=bumper_len_m
+                        bumper_length=bumper_len_m,
+                        radius_part=1.0,
+                        subtract_bumper=subtract_bumper,
                     ))
                     imported += 1
 
@@ -2709,20 +2542,12 @@ class GridMasterInterface:
             logging.error(f"Ошибка импорта: {e}")
 
 
-    # =============================
-    # Вспомогательные веса (для таблицы "Вес")
-    # =============================
-    def update_weight_table_snapshot(self):
-        total_weight = self.calculate_total_weight()
-        self.update_weight_table(total_weight)
-
 # =============================
 # Запуск приложения
 # =============================
 if __name__ == "__main__":
     # 1) Прочтем тему из конфига, чтобы применить ее до создания интерфейса
-    def _read_theme_from_config(path="gridmaster_config.ini"):
-        import json, os
+    def _read_theme_from_config(path=CONFIG_FILE):
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
