@@ -399,7 +399,7 @@ class ManagerApp(ctk.CTk):
         spec_path = self._spec_path_str.get()
         if spec_path and os.path.exists(spec_path):
             try:
-                self._spec_parts = spec_reader.read_spec(spec_path)
+                self._spec_parts = spec_reader.read_spec(spec_path, self.api_key)
                 if self._spec_parts and self.current_parts:
                     self.current_parts = spec_reader.compare(self.current_parts, self._spec_parts)
             except Exception as e:
