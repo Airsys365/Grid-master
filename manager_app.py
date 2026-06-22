@@ -112,6 +112,7 @@ class ManagerApp(ctk.CTk):
             self.cfg, reloaded = pm.reload_excel_if_needed(self.cfg)
             if reloaded:
                 pm.save_config(self.cfg)
+            self.after(400, self._refresh_material_combos)
 
     def _ask_excel_files(self):
         win = ctk.CTkToplevel(self)
@@ -146,6 +147,7 @@ class ManagerApp(ctk.CTk):
             self.cfg = pm.reload_excel(self.cfg)
             pm.save_config(self.cfg)
             win.destroy()
+            self._refresh_material_combos()
             messagebox.showinfo("Готово", "Данные загружены успешно!")
 
         ctk.CTkButton(win, text="Сохранить и загрузить", command=save).pack(pady=12)
@@ -570,6 +572,42 @@ class ManagerApp(ctk.CTk):
         self._work_coef_entry = ctk.CTkEntry(r2, width=60)
         self._work_coef_entry.insert(0, "1.0")
         self._work_coef_entry.pack(side="left")
+
+    def _refresh_material_combos(self):
+        """Обновить выпадающие списки материалов после загрузки Excel."""
+        mat_articles = [m["article"] for m in self.cfg.get("mat_data", [])]
+        if mat_articles:
+            self._mat_cb.configure(values=mat_articles)
+            last = self.cfg.get("last_mat_article", "")
+            self._mat_cb.set(last if last in mat_articles else mat_articles[0])
+
+        frame_types = [t for t, _ in self.cfg.get("frame_weights", [])]
+        if frame_types:
+            self._frame_cb.configure(values=frame_types)
+            last_f = self.cfg.get("last_frame_type", "")
+            self._frame_cb.set(last_f if last_f in frame_types else frame_types[0])
+
+        angle_types = [t for t, _ in self.cfg.get("angle_weights", [])]
+        if angle_types:
+            self._angle_cb.configure(values=angle_types)
+            last_a = self.cfg.get("last_angle_type", "")
+            self._angle_cb.set(last_a if last_a in angle_types else angle_types[0])
+
+        bumper_types = [t for t, _ in self.cfg.get("bumper_weights", [])]
+        if bumper_types:
+            self._bumper_cb.configure(values=bumper_types)
+            last_b = self.cfg.get("last_bumper_type", "")
+            self._bumper_cb.set(last_b if last_b in bumper_types else bumper_types[0])
+
+        # Подставить цену мата из данных
+        if mat_articles:
+            self._on_mat_changed(self._mat_cb.get())
+
+        # Обновить поля цен из конфига
+        for key, e in self._price_entries.items():
+            val = pm.get_price(self.cfg, key)
+            e.delete(0, "end")
+            e.insert(0, f"{val:.2f}" if val else "")
 
     def _on_mat_changed(self, article: str):
         spec = pm.get_mat_spec(self.cfg, article)
