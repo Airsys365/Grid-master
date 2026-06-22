@@ -348,17 +348,36 @@ class ManagerApp(ctk.CTk):
         self._recog_status.configure(text="")
 
         def work():
-            all_parts = []
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            import traceback
+
+            results = {}
             errors = []
+            total = len(self._pdf_paths)
+            done_count = [0]
+
+            def process_one(path):
+                return path, ai.recognize_pdf(path, self.api_key)
+
+            with ThreadPoolExecutor(max_workers=min(total, 8)) as executor:
+                futures = {executor.submit(process_one, p): p for p in self._pdf_paths}
+                for future in as_completed(futures):
+                    path = futures[future]
+                    try:
+                        _, parts = future.result()
+                        results[path] = parts
+                    except Exception:
+                        errors.append(f"{os.path.basename(path)}: {traceback.format_exc()}")
+                        results[path] = []
+                    done_count[0] += 1
+                    n_done = done_count[0]
+                    self.after(0, lambda d=n_done: self._recog_status.configure(
+                        text=f"Обрабатываю: {d}/{total}...", text_color="grey"))
+
+            all_parts = []
             for path in self._pdf_paths:
-                try:
-                    self.after(0, lambda p=path: self._recog_status.configure(
-                        text=f"Обрабатываю: {os.path.basename(p)}...", text_color="grey"))
-                    parts = ai.recognize_pdf(path, self.api_key)
-                    all_parts.extend(parts)
-                except Exception as e:
-                    import traceback
-                    errors.append(f"{os.path.basename(path)}: {traceback.format_exc()}")
+                all_parts.extend(results.get(path, []))
+
             self.current_parts = all_parts
             if errors:
                 err_text = "\n\n".join(errors)
