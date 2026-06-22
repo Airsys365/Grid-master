@@ -18,6 +18,32 @@ import ai_recognizer as ai
 import pdf_export as pdf_exp
 
 APP_TITLE   = "Grid Master — Менеджер"
+
+
+def _bind_tooltip(widget, text: str):
+    """Показывает всплывающую подсказку при наведении."""
+    tip_win = [None]
+
+    def show(event):
+        if tip_win[0]:
+            return
+        x = widget.winfo_rootx() + 20
+        y = widget.winfo_rooty() + 20
+        w = tk.Toplevel(widget)
+        w.wm_overrideredirect(True)
+        w.wm_geometry(f"+{x}+{y}")
+        tk.Label(w, text=text, background="#ffffe0", relief="solid",
+                 borderwidth=1, font=("Segoe UI", 9), wraplength=300,
+                 justify="left", padx=6, pady=4).pack()
+        tip_win[0] = w
+
+    def hide(event):
+        if tip_win[0]:
+            tip_win[0].destroy()
+            tip_win[0] = None
+
+    widget.bind("<Enter>", show)
+    widget.bind("<Leave>", hide)
 ORDERS_FILE = "orders_history.json"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 
@@ -364,58 +390,46 @@ class ManagerApp(ctk.CTk):
         self._build_params_panel(right)
 
     def _build_params_panel(self, parent):
-        def row(label, widget_fn):
+        def combo_row(label, combo):
+            """Метка сверху, комбо снизу — экономит горизонтальное место."""
             r = ctk.CTkFrame(parent, fg_color="transparent")
-            r.pack(fill="x", padx=8, pady=3)
-            ctk.CTkLabel(r, text=label, width=120, anchor="w").pack(side="left")
-            widget_fn(r)
+            r.pack(fill="x", padx=8, pady=(4, 0))
+            ctk.CTkLabel(r, text=label, anchor="w", font=("Segoe UI", 10)).pack(fill="x")
+            combo.pack(fill="x", pady=(0, 2))
 
         # Материалы
-        ctk.CTkLabel(parent, text="Материалы", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=8, pady=(8,2))
+        ctk.CTkLabel(parent, text="Материалы", font=("Segoe UI", 11, "bold")).pack(
+            anchor="w", padx=8, pady=(10, 2))
 
         mat_articles = [m["article"] for m in self.cfg.get("mat_data", [])]
-        self._mat_cb = ctk.CTkComboBox(parent, values=mat_articles or ["—"], width=180,
+        self._mat_cb = ctk.CTkComboBox(parent, values=mat_articles or ["—"],
                                         command=self._on_mat_changed)
         last = self.cfg.get("last_mat_article", "")
-        if last in mat_articles:
-            self._mat_cb.set(last)
-        elif mat_articles:
-            self._mat_cb.set(mat_articles[0])
-
-        def mat_row(p):
-            r = ctk.CTkFrame(p, fg_color="transparent")
-            r.pack(fill="x", padx=8, pady=3)
-            ctk.CTkLabel(r, text="Мат:", width=120, anchor="w").pack(side="left")
-            self._mat_cb.pack(side="left")
-        mat_row(parent)
+        if last in mat_articles:   self._mat_cb.set(last)
+        elif mat_articles:         self._mat_cb.set(mat_articles[0])
+        combo_row("Мат (артикул):", self._mat_cb)
 
         frame_types = [t for t, _ in self.cfg.get("frame_weights", [])]
-        self._frame_cb = ctk.CTkComboBox(parent, values=frame_types or ["—"], width=180)
+        self._frame_cb = ctk.CTkComboBox(parent, values=frame_types or ["—"])
         last_f = self.cfg.get("last_frame_type", "")
-        if last_f in frame_types:
-            self._frame_cb.set(last_f)
-        elif frame_types:
-            self._frame_cb.set(frame_types[0])
-        row("Обрамление:", lambda p: self._frame_cb.pack(side="left"))
+        if last_f in frame_types:  self._frame_cb.set(last_f)
+        elif frame_types:          self._frame_cb.set(frame_types[0])
+        combo_row("Обрамление:", self._frame_cb)
 
         angle_types = [t for t, _ in self.cfg.get("angle_weights", [])]
-        self._angle_cb = ctk.CTkComboBox(parent, values=angle_types or ["—"], width=180)
+        self._angle_cb = ctk.CTkComboBox(parent, values=angle_types or ["—"])
         last_a = self.cfg.get("last_angle_type", "")
-        if last_a in angle_types:
-            self._angle_cb.set(last_a)
-        elif angle_types:
-            self._angle_cb.set(angle_types[0])
-        row("Перфоуголок:", lambda p: self._angle_cb.pack(side="left"))
+        if last_a in angle_types:  self._angle_cb.set(last_a)
+        elif angle_types:          self._angle_cb.set(angle_types[0])
+        combo_row("Перфоуголок:", self._angle_cb)
 
         bumper_types = [t for t, _ in self.cfg.get("bumper_weights", [])]
-        self._bumper_cb = ctk.CTkComboBox(parent, values=bumper_types or ["—"], width=180)
+        self._bumper_cb = ctk.CTkComboBox(parent, values=bumper_types or ["—"])
         last_b = self.cfg.get("last_bumper_type", "")
-        if last_b in bumper_types:
-            self._bumper_cb.set(last_b)
-        elif bumper_types:
-            self._bumper_cb.set(bumper_types[0])
-        row("Отбойник:", lambda p: self._bumper_cb.pack(side="left"))
-
+        if last_b in bumper_types: self._bumper_cb.set(last_b)
+        elif bumper_types:         self._bumper_cb.set(bumper_types[0])
+        combo_row("Отбойник:", self._bumper_cb)
+        last_b = self.cfg.get("last_bumper_type", "")
         # Цены
         ctk.CTkLabel(parent, text="Цены (редактируемые)", font=("Segoe UI", 11, "bold")).pack(
             anchor="w", padx=8, pady=(12, 2))
@@ -497,9 +511,12 @@ class ManagerApp(ctk.CTk):
         ctk.CTkButton(row, text="✕", width=30, fg_color="transparent", text_color="red",
                       command=lambda i=idx: self._delete_part(i)).pack(side="right")
 
-        if part.get("notes"):
-            ctk.CTkLabel(row, text=part["notes"], text_color="grey", font=("Segoe UI", 9)).pack(
-                side="left", padx=8)
+        # Иконка комментария с тултипом (не занимает место в строке)
+        notes = part.get("notes", "")
+        if notes:
+            note_lbl = ctk.CTkLabel(row, text="💬", width=22, cursor="hand2")
+            note_lbl.pack(side="left", padx=(4, 0))
+            _bind_tooltip(note_lbl, notes)
 
     def _add_part_manual(self):
         part = {"position": "", "length": 0, "width": 0, "quantity": 1,
