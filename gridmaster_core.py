@@ -142,7 +142,7 @@ def _frame_length_m(parts: List[Part]) -> float:
         per_mm = (2 * p.width + p.length) if p.width < 1000 else (2 * p.width)
         if p.bumper and p.subtract_bumper:
             per_mm -= linear_mm
-        total += max(0.0, per_mm / 1000.0) * p.quantity
+        total += max(0.0, round(per_mm / 1000.0, 2)) * p.quantity
     return round(total, 2)
 
 
