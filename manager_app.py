@@ -625,7 +625,10 @@ class ManagerApp(ctk.CTk):
         icon = "🔵" if only_spec else ("⚠" if (has_conflict or conf != "high") else "✓")
         ctk.CTkLabel(row, text=icon, width=24).pack(side="left", padx=4)
         ctk.CTkLabel(row, text=str(part.get("position", "")), width=160, anchor="w").pack(side="left")
-        ctk.CTkLabel(row, text=f"{part.get('length',0)} × {part.get('width',0)} мм", width=130).pack(side="left")
+        l2 = part.get("length2", 0) or 0
+        size_str = (f"{part.get('length',0)}/{l2} × {part.get('width',0)} мм"
+                    if l2 else f"{part.get('length',0)} × {part.get('width',0)} мм")
+        ctk.CTkLabel(row, text=size_str, width=140).pack(side="left")
 
         # Количество + кнопка принять из спеки
         if has_conflict:
@@ -688,6 +691,7 @@ class ManagerApp(ctk.CTk):
         fields = [
             ("Позиция/обозначение", "position",    str(part.get("position", ""))),
             ("Длина (мм)",          "length",       str(part.get("length", ""))),
+            ("Длина 2 (мм, трапеция)", "length2",  str(part.get("length2", "") or "")),
             ("Ширина (мм)",         "width",        str(part.get("width", ""))),
             ("Количество",          "quantity",     str(part.get("quantity", 1))),
             ("Радиус (мм)",         "radius",       str(part.get("radius", ""))),
@@ -712,7 +716,7 @@ class ManagerApp(ctk.CTk):
         def save():
             for key, e in entries.items():
                 v = e.get().strip()
-                if key in ("length", "width", "quantity"):
+                if key in ("length", "length2", "width", "quantity"):
                     part[key] = int(_float(v) or 0)
                 elif key in ("radius", "bumper", "work"):
                     part[key] = _float(v)
@@ -771,6 +775,7 @@ class ManagerApp(ctk.CTk):
             parts.append(core.Part(
                 position=str(p.get("position", "")),
                 length=float(p.get("length", 0)),
+                length2=float(p.get("length2", 0) or 0),
                 width=float(p.get("width", 0)),
                 quantity=int(p.get("quantity", 1)),
                 angle=str(p.get("angle", "0")),

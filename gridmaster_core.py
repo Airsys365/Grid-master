@@ -37,16 +37,17 @@ def weight_per_m(table: List[Tuple[str, float]], type_name: str) -> float:
 class Part:
     """Одна деталь/позиция заказа."""
     position: str
-    length: float           # мм, несущая полоса
-    width: float            # мм, связующая полоса
+    length: float           # мм, большая параллельная сторона (вдоль полос)
+    width: float            # мм, связующая полоса (поперёк)
     quantity: int
     angle: str              # длина перфоуголка, мм (или "0"/"")
-    bumper: float           # длина отбойника, мм
+    bumper: float           # длина прямого кикплейта, мм
     work: float             # нормо-часы
     radius: float = 0.0
     radius_part: float = 1.0
     subtract_bumper: bool = True
-    bumper_length: float = 0.0  # итоговая длина отбойника (м), заполняется при расчёте
+    bumper_length: float = 0.0
+    length2: float = 0.0    # мм, вторая параллельная сторона (трапеция; 0 = прямоугольник)
 
 
 @dataclass
@@ -139,7 +140,11 @@ def _frame_length_m(parts: List[Part]) -> float:
     total = 0.0
     for p in parts:
         linear_mm, total_bumper_mm = _bumper_lengths(p.bumper, p.radius, p.radius_part)
-        per_mm = (2 * p.width + p.length) if p.width < 1000 else (2 * p.width)
+        if p.length2 > 0:
+            # Трапеция: три стороны = L1 + L2 + W (четвёртая — скошенная, считается вручную)
+            per_mm = p.length + p.length2 + p.width
+        else:
+            per_mm = (2 * p.width + p.length) if p.width < 1000 else (2 * p.width)
         # Вычитаем прямую часть кикплейта если указано
         if p.bumper and p.subtract_bumper:
             per_mm -= linear_mm
@@ -173,11 +178,26 @@ def _bumper_length_m(parts: List[Part]) -> float:
     return round(total, 2)
 
 
+def _rect_area_m2(p: Part) -> float:
+    """Площадь по прямоугольнику для стоимости мата (скосы и вырезы — в отход)."""
+    return (p.length * p.width) / 1_000_000.0
+
+
+def _net_area_m2(p: Part) -> float:
+    """Реальная площадь для веса: трапеция минус вырез радиуса."""
+    if p.length2 > 0:
+        base = ((p.length + p.length2) / 2.0 * p.width) / 1_000_000.0
+    else:
+        base = _rect_area_m2(p)
+    cutout = (math.pi * p.radius ** 2 * p.radius_part) / 1_000_000.0 if p.radius > 0 else 0.0
+    return max(0.0, base - cutout)
+
+
 def _mats_count_auto(parts: List[Part], mat_length_mm: int, mat_width_mm: int) -> float:
-    """Авторасчёт количества листов по деталям (без +15%)."""
+    """Авторасчёт количества листов по деталям (без +15%). Трапеция — по прямоугольнику."""
     if mat_length_mm <= 0 or mat_width_mm <= 0:
         return 0.0
-    total_area = sum((p.length * p.width / 1_000_000.0) * p.quantity for p in parts)
+    total_area = sum(_rect_area_m2(p) * p.quantity for p in parts)
     sheet_area = (mat_length_mm * mat_width_mm) / 1_000_000.0
     return round(total_area / sheet_area, 1) if sheet_area > 0 else 0.0
 
@@ -226,13 +246,6 @@ def calculate(order: Order) -> OrderResult:
     work_cost = round(hours * order.work_price * order.work_coef, 2)
 
     # --- Веса ---
-    # Площадь для СТОИМОСТИ = прямоугольник (вырез не вычитается, материал расходуется)
-    # Площадь для ВЕСА = прямоугольник минус вырез радиуса (реальный металл)
-    def _net_area_m2(p: Part) -> float:
-        rect = (p.length * p.width) / 1_000_000.0
-        cutout = (math.pi * p.radius ** 2 * p.radius_part) / 1_000_000.0 if p.radius > 0 else 0.0
-        return max(0.0, rect - cutout)
-
     total_area_parts = sum(_net_area_m2(p) * p.quantity for p in parts)
     weight_mats = round(total_area_parts * order.mat.weight_per_m2, 2)
     total_weight = round(weight_mats + weight_frame + weight_angle + weight_bumper, 2)
