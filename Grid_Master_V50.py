@@ -320,6 +320,15 @@ class GridMasterInterface:
         )
         self.update_btn.pack(fill='x', padx=8, pady=(8, 6))  # побольше отступ сверху
 
+        ctk.CTkButton(
+            middle_col,
+            text="🔍 Проверить core",
+            command=self._verify_core,
+            height=30,
+            font=("Segoe UI", 11),
+            fg_color=("#888888", "#555555"),
+        ).pack(fill='x', padx=8, pady=(0, 4))
+
         # ---- ПРАВАЯ КОЛОНКА (Материалы и цены) — ширина как у левой
         right_col = ctk.CTkFrame(columns_frame)
         right_col.pack(side='left', fill='both', expand=True)
@@ -1959,6 +1968,45 @@ class GridMasterInterface:
             work_coef=work_coef,
             zinc_price=zinc_price,
         )
+
+    def _verify_core(self):
+        """Временная проверка: сравнивает старые calculate_* с core.calculate()."""
+        old = {
+            "Маты":        self.calculate_mat_cost(),
+            "Обрамление":  self.calculate_frame_cost(),
+            "Уголок":      self.calculate_angle_cost(),
+            "Отбойник":    self.calculate_bumper_cost(),
+            "Работа":      self.calculate_work_cost(),
+            "Цинк":        self.calculate_zinc_cost(),
+            "Вес":         self.calculate_total_weight(),
+        }
+        old["ИТОГО"] = sum(v for k, v in old.items() if k != "Вес")
+
+        r = core.calculate(self._build_order())
+        new = {
+            "Маты":        r.mat_cost,
+            "Обрамление":  r.frame_cost,
+            "Уголок":      r.angle_cost,
+            "Отбойник":    r.bumper_cost,
+            "Работа":      r.work_cost,
+            "Цинк":        r.zinc_cost,
+            "Вес":         r.total_weight,
+            "ИТОГО":       r.total_cost,
+        }
+
+        lines = [f"{'Статья':<14} {'Старый':>10} {'Core':>10} {'Δ':>8}"]
+        lines.append("-" * 46)
+        ok = True
+        for k in old:
+            o, n = old[k], new[k]
+            delta = round(n - o, 4)
+            flag = "" if abs(delta) < 0.01 else "  ⚠️"
+            if flag:
+                ok = False
+            lines.append(f"{k:<14} {o:>10.2f} {n:>10.2f} {delta:>+8.4f}{flag}")
+        lines.append("")
+        lines.append("✅ Все цифры совпадают!" if ok else "⚠️ Есть расхождения — проверьте формулы!")
+        messagebox.showinfo("Проверка core", "\n".join(lines))
 
     def recalculate_project(self):
         """Главный пересчет через gridmaster_core."""
