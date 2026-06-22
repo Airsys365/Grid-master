@@ -947,10 +947,39 @@ class ManagerApp(ctk.CTk):
         if not hasattr(self, "_last_result"):
             return
         margin = _float(self._margin_var.get()) or 0.0
+
+        # Диалог выбора языка PDF
+        lang_win = ctk.CTkToplevel(self)
+        lang_win.title("Язык PDF")
+        lang_win.geometry("260x130")
+        lang_win.grab_set()
+        lang_win.resizable(False, False)
+
+        ctk.CTkLabel(lang_win, text="Выберите язык оффера:", font=("Segoe UI", 11)).pack(pady=(16, 8))
+        lang_var = ctk.StringVar(value=self.cfg.get("pdf_language", "en"))
+        btn_row = ctk.CTkFrame(lang_win, fg_color="transparent")
+        btn_row.pack()
+
+        def pick(lang):
+            lang_var.set(lang)
+            lang_win.destroy()
+            self._do_export_pdf(margin, lang)
+
+        ctk.CTkButton(btn_row, text="🇬🇧  English", width=110,
+                      command=lambda: pick("en")).pack(side="left", padx=8)
+        ctk.CTkButton(btn_row, text="🇪🇪  Eesti", width=110,
+                      command=lambda: pick("et")).pack(side="left", padx=8)
+
+        lang_win.bind("<Escape>", lambda e: lang_win.destroy())
+
+    def _do_export_pdf(self, margin: float, language: str):
+        self.cfg["pdf_language"] = language
+        pm.save_config(self.cfg)
+        client = self.current_client or "client"
         path = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF", "*.pdf")],
-            initialfile=f"Оффер_{self.current_client or 'клиент'}.pdf",
+            initialfile=f"Offer_{client}.pdf",
         )
         if not path:
             return
@@ -963,10 +992,11 @@ class ManagerApp(ctk.CTk):
                 margin_pct=margin,
                 company_name=self.cfg.get("company_name", "Grid Master"),
                 company_contact=self.cfg.get("company_contact", ""),
+                language=language,
             )
-            messagebox.showinfo("Готово", f"PDF сохранён:\n{path}")
+            messagebox.showinfo("Done", f"PDF saved:\n{path}")
         except Exception as e:
-            messagebox.showerror("Ошибка PDF", str(e))
+            messagebox.showerror("PDF Error", str(e))
 
     def _save_order(self):
         if not hasattr(self, "_last_result"):
