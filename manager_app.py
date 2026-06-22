@@ -278,23 +278,33 @@ class ManagerApp(ctk.CTk):
         if not self._pdf_paths:
             messagebox.showwarning("Нет файлов", "Сначала выберите PDF-чертежи.")
             return
+        # Берём ключ прямо из поля — не требуем нажатия «Сохранить»
+        self.api_key = self._api_entry.get().strip()
         if not self.api_key:
             messagebox.showwarning("Нет API ключа", "Введите API ключ Claude на главном экране.")
             return
+        self.cfg["api_key"] = self.api_key
+        pm.save_config(self.cfg)
         self.current_client = self._client_entry.get().strip()
         self._recog_btn.configure(state="disabled", text="Распознаю...")
         self._recog_status.configure(text="")
 
         def work():
             all_parts = []
+            errors = []
             for path in self._pdf_paths:
                 try:
+                    self.after(0, lambda p=path: self._recog_status.configure(
+                        text=f"Обрабатываю: {os.path.basename(p)}...", text_color="grey"))
                     parts = ai.recognize_pdf(path, self.api_key)
                     all_parts.extend(parts)
                 except Exception as e:
-                    self.after(0, lambda err=str(e): self._recog_status.configure(
-                        text=f"Ошибка: {err}", text_color="red"))
+                    import traceback
+                    errors.append(f"{os.path.basename(path)}: {traceback.format_exc()}")
             self.current_parts = all_parts
+            if errors:
+                err_text = "\n\n".join(errors)
+                self.after(0, lambda t=err_text: messagebox.showerror("Ошибка распознавания", t))
             self.after(0, self._on_recognition_done)
 
         threading.Thread(target=work, daemon=True).start()

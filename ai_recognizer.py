@@ -71,9 +71,13 @@ def recognize_pdf(pdf_path: str, api_key: str) -> List[Dict]:
     """
     if not _HAS_ANTHROPIC:
         raise RuntimeError("Установите пакет: pip install anthropic")
+    if not api_key:
+        raise RuntimeError("API ключ не указан. Введите ключ Anthropic на главном экране.")
 
     pages = _pdf_to_images(pdf_path)
     if not pages:
+        if not _HAS_FITZ:
+            raise RuntimeError("Установите PyMuPDF: pip install pymupdf")
         # Fallback: попробуем как текст через PyMuPDF
         return _recognize_text_pdf(pdf_path, api_key)
 
