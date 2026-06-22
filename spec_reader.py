@@ -65,13 +65,15 @@ def _read_word(path: str) -> List[Dict]:
                 continue
 
             # Ищем позицию — колонка с обозначением типа K.XX.XX.XX.XXX
-            pos = _find_position(cells)
+            pos, pos_idx = _find_position_with_idx(cells)
             if not pos:
                 continue
 
-            qty = _find_quantity(cells)
-            weight = _find_weight(cells)
-            article = _find_article(cells)
+            # Берём только ячейки ПОСЛЕ колонки с позицией
+            after = cells[pos_idx + 1:]
+            qty = _find_quantity(after)
+            weight = _find_weight(after)
+            article = _find_article(after)
 
             result.append({
                 "position":    pos,
@@ -215,26 +217,35 @@ def apply_spec_quantities(parts: List[Dict]) -> List[Dict]:
 _POS_RE = re.compile(r'[A-Z]\.\d{2}\.\d{2}\.\d{2}\.\d{3}(?:-\d+)?', re.IGNORECASE)
 
 def _find_position(cells: List[str]) -> Optional[str]:
-    for c in cells:
+    pos, _ = _find_position_with_idx(cells)
+    return pos
+
+def _find_position_with_idx(cells: List[str]):
+    for i, c in enumerate(cells):
         m = _POS_RE.search(c)
         if m:
-            return m.group().upper()
-    return None
+            return m.group().upper(), i
+    return None, -1
 
 def _normalize_pos(pos: str) -> str:
     return pos.upper().strip()
 
 def _find_quantity(cells: List[str]) -> int:
-    """Ищет целое число 1-999 в подходящей колонке (не вес)."""
+    """Ищет количество (целое 1-99) — берём последнее подходящее число в строке."""
+    candidates = []
     for c in cells:
         s = c.strip().replace(",", ".")
+        # Пропускаем ячейки с обозначением позиции
+        if _POS_RE.search(s):
+            continue
         try:
             v = float(s)
-            if v == int(v) and 1 <= int(v) <= 999 and "." not in s:
-                return int(v)
+            if v == int(v) and 1 <= int(v) <= 99 and "." not in s:
+                candidates.append(int(v))
         except Exception:
             pass
-    return 1
+    # Берём последнее найденное (в спеках количество обычно в конце)
+    return candidates[-1] if candidates else 1
 
 def _find_weight(cells: List[str]) -> Optional[float]:
     """Ищет дробное число (вес кг) — содержит запятую или точку."""
