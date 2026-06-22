@@ -138,10 +138,15 @@ def _bumper_lengths(bumper_mm: float, radius: float, radius_part: float = 1.0) -
 def _frame_length_m(parts: List[Part]) -> float:
     total = 0.0
     for p in parts:
-        linear_mm, _ = _bumper_lengths(p.bumper, p.radius, p.radius_part)
+        linear_mm, total_bumper_mm = _bumper_lengths(p.bumper, p.radius, p.radius_part)
         per_mm = (2 * p.width + p.length) if p.width < 1000 else (2 * p.width)
+        # Вычитаем прямую часть кикплейта если указано
         if p.bumper and p.subtract_bumper:
             per_mm -= linear_mm
+        # Дуга радиуса всегда уходит в кикплейт, не в обрамление
+        arc_mm = total_bumper_mm - linear_mm
+        if arc_mm > 0:
+            per_mm -= arc_mm
         total += max(0.0, round(per_mm / 1000.0, 2)) * p.quantity
     return round(total, 2)
 
@@ -160,7 +165,12 @@ def _angle_length_m(parts: List[Part]) -> float:
 
 
 def _bumper_length_m(parts: List[Part]) -> float:
-    return round(sum(p.bumper_length * p.quantity for p in parts if p.bumper_length > 0), 2)
+    """Суммарная длина кикплейта: прямая часть + дуги радиусов."""
+    total = 0.0
+    for p in parts:
+        _, total_mm = _bumper_lengths(p.bumper, p.radius, p.radius_part)
+        total += (total_mm / 1000.0) * p.quantity
+    return round(total, 2)
 
 
 def _mats_count_auto(parts: List[Part], mat_length_mm: int, mat_width_mm: int) -> float:
