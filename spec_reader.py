@@ -225,21 +225,44 @@ def compare(ai_parts: List[Dict], spec_parts: List[Dict]) -> List[Dict]:
 
         result.append(merged)
 
+    # Индекс AI-позиций по базовому обозначению (без суффикса -01, -02...)
+    ai_by_base = {}
+    for p in ai_parts:
+        base = re.sub(r'-\d+$', '', p.get("position", "").upper().strip())
+        ai_by_base[base] = p
+
     for key, sp in spec_by_pos.items():
         if key not in matched_keys:
-            result.append({
-                "position":       sp["position"],
-                "length":         0,
-                "width":          0,
-                "quantity":       sp["quantity"],
-                "notes":          "",
-                "confidence":     "low",
-                "diff":           ["нет в чертежах ИИ"],
-                "in_spec":        True,
-                "only_in_spec":   True,
-                "mat_article":    sp.get("mat_article"),
-                "weight_kg_spec": sp.get("weight_kg"),
-            })
+            base = re.sub(r'-\d+$', '', key)
+            original = ai_by_base.get(base) if base != key else None
+            if original:
+                # Зеркальная/производная деталь — копируем размеры из оригинала
+                entry = dict(original)
+                entry["position"]       = sp["position"]
+                entry["quantity"]       = sp["quantity"]
+                entry["notes"]          = (original.get("notes") or "") + " [зеркальная копия]"
+                entry["confidence"]     = "medium"
+                entry["diff"]           = [f"зеркало {original['position']}"]
+                entry["in_spec"]        = True
+                entry["only_in_spec"]   = True
+                entry["weight_kg_spec"] = sp.get("weight_kg")
+                entry.pop("quantity_conflict", None)
+                entry.pop("quantity_spec", None)
+            else:
+                entry = {
+                    "position":       sp["position"],
+                    "length":         0,
+                    "width":          0,
+                    "quantity":       sp["quantity"],
+                    "notes":          "",
+                    "confidence":     "low",
+                    "diff":           ["нет в чертежах ИИ"],
+                    "in_spec":        True,
+                    "only_in_spec":   True,
+                    "mat_article":    sp.get("mat_article"),
+                    "weight_kg_spec": sp.get("weight_kg"),
+                }
+            result.append(entry)
 
     return result
 
