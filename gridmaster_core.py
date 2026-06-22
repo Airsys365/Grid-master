@@ -216,7 +216,14 @@ def calculate(order: Order) -> OrderResult:
     work_cost = round(hours * order.work_price * order.work_coef, 2)
 
     # --- Веса ---
-    total_area_parts = sum((p.length * p.width / 1_000_000.0) * p.quantity for p in parts)
+    # Площадь для СТОИМОСТИ = прямоугольник (вырез не вычитается, материал расходуется)
+    # Площадь для ВЕСА = прямоугольник минус вырез радиуса (реальный металл)
+    def _net_area_m2(p: Part) -> float:
+        rect = (p.length * p.width) / 1_000_000.0
+        cutout = (math.pi * p.radius ** 2 * p.radius_part) / 1_000_000.0 if p.radius > 0 else 0.0
+        return max(0.0, rect - cutout)
+
+    total_area_parts = sum(_net_area_m2(p) * p.quantity for p in parts)
     weight_mats = round(total_area_parts * order.mat.weight_per_m2, 2)
     total_weight = round(weight_mats + weight_frame + weight_angle + weight_bumper, 2)
     total_weight_with_zinc = round(total_weight * 1.1, 2)
