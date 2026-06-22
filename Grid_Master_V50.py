@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 import re
+import gridmaster_core as core
 import openpyxl
 import pandas as pd
 import tkinter as tk
@@ -1828,28 +1829,25 @@ class GridMasterInterface:
         base_weight = self.calculate_total_weight()
         return round(base_weight * 1.1, 2)
 
-    def update_cost_table(self, total_cost: float):
+    def update_cost_table(self, r: core.OrderResult):
         self.cost_table.delete(*self.cost_table.get_children())
         manual = getattr(self, "manual_mats_var", None)
         mats_label = "Маты" if (manual and manual.get()) else "Маты + 15%"
-        self.cost_table.insert('', 'end', values=(mats_label, f"{self.calculate_mat_cost():.2f}".replace('.', ',')))
-        self.cost_table.insert('', 'end', values=("Обрамление", f"{self.calculate_frame_cost():.2f}".replace('.', ',')))
-        angle_pieces = self.calculate_angle_piece_count()
-        angle_cost = self.calculate_angle_cost()
-        self.cost_table.insert('', 'end', values=(f"Перфоуголок ({angle_pieces} шт)", f"{angle_cost:.2f}".replace('.', ',')))
+        self.cost_table.insert('', 'end', values=(mats_label, f"{r.mat_cost:.2f}".replace('.', ',')))
+        self.cost_table.insert('', 'end', values=("Обрамление", f"{r.frame_cost:.2f}".replace('.', ',')))
+        self.cost_table.insert('', 'end', values=(f"Перфоуголок ({r.angle_piece_count} шт)", f"{r.angle_cost:.2f}".replace('.', ',')))
+        self.cost_table.insert('', 'end', values=("Отбойник", f"{r.bumper_cost:.2f}".replace('.', ',')))
+        self.cost_table.insert('', 'end', values=("Цинкование", f"{r.zinc_cost:.2f}".replace('.', ',')))
+        self.cost_table.insert('', 'end', values=("Работа", f"{r.work_cost:.2f}".replace('.', ',')))
 
-        self.cost_table.insert('', 'end', values=("Отбойник", f"{self.calculate_bumper_cost():.2f}".replace('.', ',')))
-        self.cost_table.insert('', 'end', values=("Цинкование", f"{self.calculate_zinc_cost():.2f}".replace('.', ',')))
-        self.cost_table.insert('', 'end', values=("Работа", f"{self.calculate_work_cost():.2f}".replace('.', ',')))
-
-    def update_weight_table(self, total_weight: float):
+    def update_weight_table(self, r: core.OrderResult):
         self.weight_table.delete(*self.weight_table.get_children())
-        self.weight_table.insert('', 'end', values=("Решетка", f"{self.calculate_total_weight_mats_only():.2f}".replace('.', ',')))
-        self.weight_table.insert('', 'end', values=("Обрамление", f"{self.calculate_frame_weight_only():.2f}".replace('.', ',')))
-        self.weight_table.insert('', 'end', values=("Перфоуголок", f"{self.calculate_angle_weight_only():.2f}".replace('.', ',')))
-        self.weight_table.insert('', 'end', values=("Отбойник", f"{self.calculate_bumper_weight_only():.2f}".replace('.', ',')))
-        self.weight_table.insert('', 'end', values=("Общий черный вес", f"{total_weight:.2f}".replace('.', ',')))
-        self.weight_table.insert('', 'end', values=("Общий вес с цинком (+10%)", f"{self.calculate_total_weight_with_zinc():.2f}".replace('.', ',')))
+        self.weight_table.insert('', 'end', values=("Решетка", f"{r.weight_mats:.2f}".replace('.', ',')))
+        self.weight_table.insert('', 'end', values=("Обрамление", f"{r.weight_frame:.2f}".replace('.', ',')))
+        self.weight_table.insert('', 'end', values=("Перфоуголок", f"{r.weight_angle:.2f}".replace('.', ',')))
+        self.weight_table.insert('', 'end', values=("Отбойник", f"{r.weight_bumper:.2f}".replace('.', ',')))
+        self.weight_table.insert('', 'end', values=("Общий черный вес", f"{r.total_weight:.2f}".replace('.', ',')))
+        self.weight_table.insert('', 'end', values=("Общий вес с цинком (+10%)", f"{r.total_weight_with_zinc:.2f}".replace('.', ',')))
 
     def calculate_total_weight_mats_only(self) -> float:
         """
@@ -1892,39 +1890,93 @@ class GridMasterInterface:
             return 0.0
         return round(self.calculate_bumper_length_m() * self._weight_per_m(self.bumper_weights, self._combo_get("Отбойник")), 2)
 
-    def recalculate_project(self):
-        """
-        Главный пересчет. Все вспомогательные calculate_*() сами читают
-        текущие значения из UI (Entry/Combo) и возвращают 0 при пустых данных.
-        """
-        try:
-            # Итоговая стоимость по компонентам
-            total_cost = (
-                getattr(self, "calculate_mat_cost",     lambda: 0.0)() +
-                getattr(self, "calculate_frame_cost",   lambda: 0.0)() +
-                getattr(self, "calculate_angle_cost",   lambda: 0.0)() +
-                getattr(self, "calculate_bumper_cost",  lambda: 0.0)() +
-                getattr(self, "calculate_zinc_cost",    lambda: 0.0)() +
-                getattr(self, "calculate_work_cost",    lambda: 0.0)()
+    def _build_order(self) -> core.Order:
+        """Собирает core.Order из текущего состояния UI."""
+        parts = [
+            core.Part(
+                position=p.position,
+                length=p.length,
+                width=p.width,
+                quantity=p.quantity,
+                angle=p.angle,
+                bumper=p.bumper,
+                work=p.work,
+                radius=p.radius,
+                radius_part=p.radius_part,
+                subtract_bumper=p.subtract_bumper,
+                bumper_length=p.bumper_length,
             )
+            for p in self.project_parts
+        ]
 
-            # Итоговый вес и метрики
-            total_weight = getattr(self, "calculate_total_weight", lambda: 0.0)()
-            mats_count   = getattr(self, "calculate_mats_count",   lambda: 0.0)()
+        mat = core.MatSpec(
+            article=self.article_cb.get() if hasattr(self, "article_cb") else "",
+            price_per_m2=self._selected_mat_price_per_m2(),
+            weight_per_m2=self._selected_mat_weight_per_m2(),
+        )
 
-            cost_per_kg = (total_cost / total_weight) if total_weight > 0 else 0.0
+        L_mm, W_mm = self._get_mat_dimensions_mm()
+        manual = getattr(self, "manual_mats_var", None)
+        manual_k = bool(manual and manual.get())
+        try:
+            manual_count = float((self.mats_count_entry.get() or "0").replace(",", "."))
+        except Exception:
+            manual_count = 0.0
+
+        try:
+            frame_coef = float((self.frame_coef_entry.get() or "1").replace(",", "."))
+        except Exception:
+            frame_coef = 1.0
+
+        try:
+            work_coef = float((self.work_coeff.get() or "1").replace(",", "."))
+        except Exception:
+            work_coef = 1.0
+
+        try:
+            zinc_price = float((self.zinc_entry.get() or "0").replace(",", "."))
+        except Exception:
+            zinc_price = 0.0
+
+        return core.Order(
+            parts=parts,
+            mat=mat,
+            mat_length_mm=L_mm,
+            mat_width_mm=W_mm,
+            manual_mats_count=manual_count,
+            manual_mats_k=manual_k,
+            frame_type=self._combo_get("Обрамление"),
+            frame_price=self._price_of("обрамление"),
+            frame_coef=frame_coef,
+            frame_weights=self.frame_weights,
+            angle_type=self._combo_get("Перфоуголок"),
+            angle_price=self._price_of("angle"),
+            angle_weights=self.angle_weights,
+            bumper_type=self._combo_get("Отбойник"),
+            bumper_price=self._price_of("отбойник"),
+            bumper_weights=self.bumper_weights,
+            work_price=self._price_of("работа"),
+            work_coef=work_coef,
+            zinc_price=zinc_price,
+        )
+
+    def recalculate_project(self):
+        """Главный пересчет через gridmaster_core."""
+        try:
+            order = self._build_order()
+            r = core.calculate(order)
 
             # Карточки справа
-            self.project_stats["Кол-во матов"].set(f"{mats_count:.1f}")
-            self.project_stats["Себестоимость €/кг"].set(f"{cost_per_kg:.2f}")
-            self.project_stats["Цена проекта €"].set(f"{total_cost:.2f}")
-            self.project_stats["Общий черный вес"].set(f"{total_weight:.2f}")
+            self.project_stats["Кол-во матов"].set(f"{r.mats_count:.1f}")
+            self.project_stats["Себестоимость €/кг"].set(f"{r.cost_per_kg:.2f}")
+            self.project_stats["Цена проекта €"].set(f"{r.total_cost:.2f}")
+            self.project_stats["Общий черный вес"].set(f"{r.total_weight:.2f}")
 
             # Таблицы результатов
             if hasattr(self, "update_cost_table"):
-                self.update_cost_table(total_cost)
+                self.update_cost_table(r)
             if hasattr(self, "update_weight_table"):
-                self.update_weight_table(total_weight)
+                self.update_weight_table(r)
 
             if hasattr(self, "status_var"):
                 self.status_var.set("Пересчет выполнен")
