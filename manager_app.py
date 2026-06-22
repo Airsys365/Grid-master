@@ -912,6 +912,8 @@ class ManagerApp(ctk.CTk):
         ctk.CTkButton(btns, text="📄 PDF оффер", width=140,
                       fg_color=("#2E8B57", "#2E8B50"),
                       command=self._export_pdf).pack(pady=6)
+        ctk.CTkButton(btns, text="✂️ Раскрой матов", width=140,
+                      command=self._cutting_dialog).pack(pady=6)
         ctk.CTkButton(btns, text="💾 Сохранить заказ", width=140,
                       command=self._save_order).pack(pady=6)
 
@@ -997,6 +999,125 @@ class ManagerApp(ctk.CTk):
             messagebox.showinfo("Done", f"PDF saved:\n{path}")
         except Exception as e:
             messagebox.showerror("PDF Error", str(e))
+
+    # ------------------------------------------------------------------
+    # Cutting / nesting
+    # ------------------------------------------------------------------
+
+    def _cutting_dialog(self):
+        """Run nesting and show result summary + visual preview."""
+        if not self.current_parts:
+            messagebox.showwarning("Нет деталей", "Список позиций пуст.")
+            return
+
+        mat_l = int(self.cfg.get("mat_length", 6100))
+        mat_w = int(self.cfg.get("mat_width", 1000))
+
+        try:
+            order = self._build_order()
+        except Exception as e:
+            messagebox.showerror("Ошибка", str(e))
+            return
+        result = core.cutting_run(order.parts, mat_l, mat_w, kerf=5)
+
+        mats = result["mats"]
+        mat_count = result["mat_count"]
+        skipped = result["skipped"]
+
+        if not mats:
+            messagebox.showwarning("Раскрой", "Нет деталей подходящего размера.")
+            return
+
+        msg = (f"Листов (раскладок): {len(mats)}\n"
+               f"Матов к списанию:    {mat_count:.1f}\n")
+        if skipped:
+            msg += f"\nПредупреждение: {skipped} шт. не вписываются в мат и исключены."
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("Раскрой матов")
+        dlg.geometry("320x200")
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        ctk.CTkLabel(dlg, text="Результат раскроя", font=("Segoe UI", 13, "bold")).pack(pady=(16, 6))
+        ctk.CTkLabel(dlg, text=msg, justify="left").pack(padx=20, anchor="w")
+
+        btns = ctk.CTkFrame(dlg, fg_color="transparent")
+        btns.pack(pady=12)
+        ctk.CTkButton(btns, text="👁  Схема", width=120,
+                      command=lambda: (dlg.destroy(), self._cutting_preview(mats, mat_l, mat_w))
+                      ).pack(side="left", padx=8)
+        ctk.CTkButton(btns, text="Закрыть", width=100,
+                      command=dlg.destroy).pack(side="left", padx=8)
+
+    def _cutting_preview(self, mats: list, mat_length: int, mat_width: int):
+        """Visual mat-by-mat nesting preview."""
+        try:
+            import matplotlib
+            matplotlib.use("TkAgg")
+            import matplotlib.pyplot as plt
+            from matplotlib.patches import Rectangle as MRect
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        except ImportError:
+            messagebox.showerror("matplotlib", "Установите: pip install matplotlib")
+            return
+
+        win = ctk.CTkToplevel(self)
+        win.title("Схема раскроя")
+        win.geometry("900x620")
+        win.grab_set()
+
+        state = {"idx": 0}
+
+        canvas_frame = ctk.CTkFrame(win)
+        canvas_frame.pack(fill="both", expand=True, padx=8, pady=8)
+
+        nav = ctk.CTkFrame(win)
+        nav.pack(fill="x", padx=8, pady=(0, 8))
+
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+        mpl_canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
+        mpl_canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        idx_label = ctk.CTkLabel(nav, text="")
+        idx_label.pack(side="left", padx=12)
+
+        def draw(idx):
+            ax.clear()
+            ax.set_xlim(0, mat_length)
+            ax.set_ylim(0, mat_width)
+            ax.set_aspect("equal", adjustable="box")
+            ax.set_xlabel("длина (мм)")
+            ax.set_ylabel("ширина (мм)")
+            ax.set_title(f"Мат #{idx + 1} / {len(mats)}", fontsize=11)
+            ax.add_patch(MRect((0, 0), mat_length, mat_width,
+                               linewidth=2, edgecolor="black", facecolor="#f5f5f5"))
+            colors = plt.cm.tab20.colors
+            for i, d in enumerate(mats[idx]):
+                color = colors[i % len(colors)]
+                ax.add_patch(MRect((d["x"], d["y"]), d["length"], d["width"],
+                                   linewidth=1, edgecolor="black", facecolor=color, alpha=0.7))
+                ax.text(d["x"] + d["length"] / 2, d["y"] + d["width"] / 2,
+                        f'{d["position"]}\n{d["length"]}×{d["width"]}',
+                        ha="center", va="center", fontsize=7, clip_on=True)
+            fig.tight_layout(pad=0.5)
+            mpl_canvas.draw_idle()
+            idx_label.configure(text=f"Мат {idx + 1} из {len(mats)}")
+
+        def prev_():
+            state["idx"] = (state["idx"] - 1) % len(mats)
+            draw(state["idx"])
+
+        def next_():
+            state["idx"] = (state["idx"] + 1) % len(mats)
+            draw(state["idx"])
+
+        ctk.CTkButton(nav, text="←", width=70, command=prev_).pack(side="left", padx=4)
+        ctk.CTkButton(nav, text="→", width=70, command=next_).pack(side="left", padx=4)
+        ctk.CTkButton(nav, text="Закрыть", width=90,
+                      command=win.destroy).pack(side="right", padx=8)
+
+        draw(0)
 
     def _save_order(self):
         if not hasattr(self, "_last_result"):

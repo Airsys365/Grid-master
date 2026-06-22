@@ -279,3 +279,127 @@ def calculate(order: Order) -> OrderResult:
         total_weight_with_zinc=total_weight_with_zinc,
         cost_per_kg=cost_per_kg,
     )
+
+
+# ---------------------------------------------------------------------------
+# Cutting / nesting
+# ---------------------------------------------------------------------------
+
+def cutting_build_columns(items: list, mat_width: int, kerf: int = 5) -> list:
+    """
+    Pack individual pieces into columns along the mat's width axis.
+    Each item: {"position", "length", "width"}.
+    Width = dimension across strips (≤ mat_width=1000mm).
+    Length = dimension along strips (≤ mat_length=6000mm, no rotation).
+    Returns list of columns: {"width_x": int, "height_used": int, "items": [...]}.
+    """
+    remaining = sorted(items, key=lambda d: (d["length"], d["width"]), reverse=True)
+    columns: list = []
+    for part in remaining:
+        best_col, best_delta = None, None
+        for col in columns:
+            need_h = part["width"] if col["height_used"] == 0 else kerf + part["width"]
+            if col["height_used"] + need_h > mat_width:
+                continue
+            new_wx = max(col["width_x"], part["length"])
+            delta = new_wx - col["width_x"]
+            if best_delta is None or delta < best_delta:
+                best_delta, best_col = delta, col
+        if best_col is None:
+            columns.append({"width_x": part["length"], "height_used": part["width"], "items": [part]})
+        else:
+            best_col["width_x"] = max(best_col["width_x"], part["length"])
+            best_col["items"].append(part)
+            best_col["height_used"] += kerf + part["width"]
+    for col in columns:
+        col["items"].sort(key=lambda d: d["width"], reverse=True)
+    return columns
+
+
+def cutting_place_mats(columns: list, mat_length: int, mat_width: int, kerf: int = 5) -> list:
+    """
+    Pack columns into mats (bins).
+    Returns list of mats, each mat is a list of placed rects:
+      {"position", "length", "width", "x", "y"}.
+    x is along mat_length (6000mm axis), y is along mat_width (1000mm axis).
+    """
+    cols = sorted(columns, key=lambda c: c["width_x"], reverse=True)
+    mats: list = []
+    while cols:
+        x = 0
+        placed: list = []
+        i = 0
+        while i < len(cols):
+            col = cols[i]
+            need_x = col["width_x"] if x == 0 else kerf + col["width_x"]
+            if x + need_x <= mat_length:
+                y = 0
+                for j, d in enumerate(col["items"]):
+                    if j > 0:
+                        y += kerf
+                    placed.append({"position": d["position"], "length": d["length"],
+                                   "width": d["width"],
+                                   "x": x if x == 0 else x + kerf, "y": y})
+                    y += d["width"]
+                x += need_x
+                cols.pop(i)
+                continue
+            i += 1
+        if not placed and cols:
+            col = cols.pop(0)
+            y = 0
+            for j, d in enumerate(col["items"]):
+                if j > 0:
+                    y += kerf
+                placed.append({"position": d["position"], "length": d["length"],
+                               "width": d["width"], "x": 0, "y": y})
+                y += d["width"]
+        mats.append(placed)
+    return mats
+
+
+def cutting_mat_fraction(rects: list, mat_length: int) -> float:
+    """Fraction of mat length used (0.0–1.0), snapped to 0.1 steps."""
+    if not rects:
+        return 0.0
+    used = max(d["x"] + d["length"] for d in rects)
+    ratio = used / mat_length if mat_length > 0 else 0.0
+    if ratio >= 0.9:
+        return 1.0
+    if ratio < 0.1:
+        return 0.0
+    return round(ratio, 1)
+
+
+def cutting_run(parts: List[Part], mat_length_mm: int = 6100, mat_width_mm: int = 1000,
+                kerf: int = 5) -> dict:
+    """
+    Run nesting for all parts (expanded by quantity).
+    Returns {
+        "mats": list of mats (each = list of placed rects),
+        "mat_count": float (fractional mats needed),
+        "skipped": int (parts that didn't fit),
+    }.
+    """
+    items = []
+    skipped = 0
+    for p in parts:
+        try:
+            l, w, q = int(p.length), int(p.width), int(p.quantity)
+        except Exception:
+            continue
+        if l <= 0 or w <= 0:
+            continue
+        if l > mat_length_mm or w > mat_width_mm:
+            skipped += q
+            continue
+        for _ in range(max(q, 0)):
+            items.append({"position": p.position, "length": l, "width": w})
+
+    if not items:
+        return {"mats": [], "mat_count": 0.0, "skipped": skipped}
+
+    columns = cutting_build_columns(items, mat_width_mm, kerf)
+    mats = cutting_place_mats(columns, mat_length_mm, mat_width_mm, kerf)
+    total = round(sum(cutting_mat_fraction(m, mat_length_mm) for m in mats), 1)
+    return {"mats": mats, "mat_count": total, "skipped": skipped}
