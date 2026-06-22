@@ -16,6 +16,7 @@ import gridmaster_core as core
 import price_manager as pm
 import ai_recognizer as ai
 import pdf_export as pdf_exp
+import spec_reader
 
 APP_TITLE   = "Grid Master — Менеджер"
 
@@ -95,6 +96,7 @@ class ManagerApp(ctk.CTk):
         # Текущий заказ (редактируется на экранах 2-4)
         self.current_parts: List[Dict] = []
         self.current_client = ""
+        self._spec_parts: List[Dict] = []   # позиции из спеки заказчика
 
         self._build_ui()
         self._show_screen("history")
@@ -236,9 +238,12 @@ class ManagerApp(ctk.CTk):
     def _new_order(self):
         self.current_parts = []
         self.current_client = ""
+        self._spec_parts = []
         self._client_entry.delete(0, "end")
         self._files_label.configure(text="Файлы не выбраны")
         self._pdf_paths = []
+        self._spec_path_str.set("")
+        self._spec_label.configure(text="не выбрана", text_color="grey")
         self._show_screen("upload")
 
     def _open_order(self, order: Dict):
@@ -254,6 +259,7 @@ class ManagerApp(ctk.CTk):
     def _build_upload_screen(self):
         s = self.screens["upload"]
         self._pdf_paths: List[str] = []
+        self._spec_path_str = ctk.StringVar(value="")
 
         ctk.CTkButton(s, text="← Назад", width=80, fg_color="transparent",
                       command=lambda: self._show_screen("history")).pack(anchor="w", padx=16, pady=12)
@@ -267,9 +273,9 @@ class ManagerApp(ctk.CTk):
         self._client_entry.pack(side="left", padx=8)
 
         # Drop zone
-        drop = ctk.CTkFrame(s, width=500, height=160, fg_color=("grey85", "grey25"),
+        drop = ctk.CTkFrame(s, width=500, height=140, fg_color=("grey85", "grey25"),
                             corner_radius=16, border_width=2, border_color=("grey70", "grey40"))
-        drop.pack(pady=16)
+        drop.pack(pady=12)
         drop.pack_propagate(False)
         ctk.CTkLabel(drop, text="📄  Перетащи PDF сюда\nили нажми для выбора",
                      font=("Segoe UI", 13), text_color="grey").pack(expand=True)
@@ -278,8 +284,20 @@ class ManagerApp(ctk.CTk):
         self._files_label = ctk.CTkLabel(s, text="Файлы не выбраны", text_color="grey")
         self._files_label.pack()
 
+        # Спека заказчика (необязательно)
+        spec_row = ctk.CTkFrame(s, fg_color="transparent")
+        spec_row.pack(pady=(8, 0))
+        ctk.CTkLabel(spec_row, text="Спека заказчика:", width=130, anchor="w").pack(side="left")
+        self._spec_label = ctk.CTkLabel(spec_row, text="не выбрана", text_color="grey", width=220, anchor="w")
+        self._spec_label.pack(side="left")
+        ctk.CTkButton(spec_row, text="📋 Выбрать", width=110,
+                      fg_color="transparent", border_width=1,
+                      command=self._choose_spec).pack(side="left", padx=6)
+        ctk.CTkButton(spec_row, text="✕", width=28, fg_color="transparent",
+                      text_color="grey", command=self._clear_spec).pack(side="left")
+
         btn_row = ctk.CTkFrame(s, fg_color="transparent")
-        btn_row.pack(pady=16)
+        btn_row.pack(pady=14)
         ctk.CTkButton(btn_row, text="Выбрать файлы", width=160,
                       fg_color="transparent", border_width=1,
                       command=self._choose_files).pack(side="left", padx=8)
@@ -299,6 +317,20 @@ class ManagerApp(ctk.CTk):
             self._pdf_paths = list(paths)
             names = ", ".join(os.path.basename(p) for p in paths)
             self._files_label.configure(text=names, text_color="white")
+
+    def _choose_spec(self):
+        path = filedialog.askopenfilename(
+            title="Спецификация заказчика",
+            filetypes=[("Word/Excel/PDF", "*.docx *.doc *.xlsx *.xls *.pdf"), ("Все файлы", "*.*")]
+        )
+        if path:
+            self._spec_path_str.set(path)
+            self._spec_label.configure(text=os.path.basename(path), text_color="white")
+
+    def _clear_spec(self):
+        self._spec_path_str.set("")
+        self._spec_label.configure(text="не выбрана", text_color="grey")
+        self._spec_parts = []
 
     def _start_recognition(self):
         if not self._pdf_paths:
@@ -340,10 +372,20 @@ class ManagerApp(ctk.CTk):
         if not self.current_parts:
             self._recog_status.configure(
                 text="Не удалось распознать позиции. Добавьте вручную.", text_color="orange")
-            self._populate_review()
         else:
             n = len(self.current_parts)
             self._recog_status.configure(text=f"Распознано {n} поз.", text_color="green")
+
+        # Загрузить спеку и сравнить
+        spec_path = self._spec_path_str.get()
+        if spec_path and os.path.exists(spec_path):
+            try:
+                self._spec_parts = spec_reader.read_spec(spec_path)
+                if self._spec_parts and self.current_parts:
+                    self.current_parts = spec_reader.compare(self.current_parts, self._spec_parts)
+            except Exception as e:
+                messagebox.showwarning("Спека", f"Не удалось прочитать спеку:\n{e}")
+
         self._populate_review()
         self._show_screen("review")
 
@@ -379,6 +421,10 @@ class ManagerApp(ctk.CTk):
         ctk.CTkLabel(parts_top, text="Позиции", font=("Segoe UI", 12, "bold")).pack(side="left")
         ctk.CTkButton(parts_top, text="+ Добавить", width=90,
                       command=self._add_part_manual).pack(side="right")
+        self._apply_spec_btn = ctk.CTkButton(
+            parts_top, text="📋 Применить кол-во из спеки", width=210,
+            fg_color=("grey70", "grey30"), command=self._apply_spec_quantities)
+        self._apply_spec_btn.pack(side="right", padx=6)
 
         self._parts_scroll = ctk.CTkScrollableFrame(left)
         self._parts_scroll.pack(fill="both", expand=True, padx=6, pady=(0, 6))
@@ -496,27 +542,61 @@ class ManagerApp(ctk.CTk):
 
     def _part_row(self, idx: int, part: Dict):
         conf = part.get("confidence", "high")
-        bg = ("grey90", "grey22") if conf == "high" else ("yellow", "#4a4000") if conf == "medium" else ("orange", "#5a2000")
+        has_conflict = bool(part.get("quantity_conflict"))
+        only_spec = part.get("only_in_spec", False)
+        not_in_spec = not part.get("in_spec", True) and "in_spec" in part
+
+        if only_spec:
+            bg = ("lightcyan", "#003344")
+        elif has_conflict:
+            bg = ("#fff3cd", "#4a3800")
+        elif conf == "medium":
+            bg = ("#fff8dc", "#4a4000")
+        elif conf == "low":
+            bg = ("#ffe0cc", "#5a2000")
+        else:
+            bg = ("grey90", "grey22")
+
         row = ctk.CTkFrame(self._parts_scroll, fg_color=bg, corner_radius=6)
         row.pack(fill="x", pady=2, padx=2)
 
-        icon = "✅" if conf == "high" else "⚠️"
+        icon = "🔵" if only_spec else ("⚠️" if (has_conflict or conf != "high") else "✅")
         ctk.CTkLabel(row, text=icon, width=24).pack(side="left", padx=4)
         ctk.CTkLabel(row, text=str(part.get("position", "")), width=160, anchor="w").pack(side="left")
         ctk.CTkLabel(row, text=f"{part.get('length',0)} × {part.get('width',0)} мм", width=130).pack(side="left")
-        ctk.CTkLabel(row, text=f"× {part.get('quantity',1)}", width=40).pack(side="left")
+
+        # Количество: показываем конфликт если есть
+        if has_conflict:
+            qc = part["quantity_conflict"]
+            qty_text = f"× {part.get('quantity',1)}  (спека: {qc['spec']})"
+            qty_color = ("#b85c00", "#ffaa44")
+        else:
+            qty_text = f"× {part.get('quantity', 1)}"
+            qty_color = None
+        qty_lbl = ctk.CTkLabel(row, text=qty_text, width=160)
+        if qty_color:
+            qty_lbl.configure(text_color=qty_color)
+        qty_lbl.pack(side="left")
 
         ctk.CTkButton(row, text="✏", width=30, fg_color="transparent",
                       command=lambda i=idx: self._edit_part(i)).pack(side="right", padx=4)
         ctk.CTkButton(row, text="✕", width=30, fg_color="transparent", text_color="red",
                       command=lambda i=idx: self._delete_part(i)).pack(side="right")
 
-        # Иконка комментария с тултипом (не занимает место в строке)
+        # Иконка комментария с тултипом
         notes = part.get("notes", "")
+        diffs = part.get("diff", [])
+        tooltip_parts = []
         if notes:
-            note_lbl = ctk.CTkLabel(row, text="💬", width=22, cursor="hand2")
+            tooltip_parts.append(notes)
+        if diffs:
+            tooltip_parts.append("Расхождения: " + "; ".join(diffs))
+        if tooltip_parts:
+            tip_text = "\n".join(tooltip_parts)
+            icon_text = "⚠️💬" if diffs else "💬"
+            note_lbl = ctk.CTkLabel(row, text=icon_text, width=30, cursor="hand2")
             note_lbl.pack(side="left", padx=(4, 0))
-            _bind_tooltip(note_lbl, notes)
+            _bind_tooltip(note_lbl, tip_text)
 
     def _add_part_manual(self):
         part = {"position": "", "length": 0, "width": 0, "quantity": 1,
@@ -572,6 +652,15 @@ class ManagerApp(ctk.CTk):
 
     def _delete_part(self, idx: int):
         self.current_parts.pop(idx)
+        self._populate_review()
+
+    def _apply_spec_quantities(self):
+        """Заменяет количества из спеки заказчика во всех позициях с конфликтом."""
+        self.current_parts = spec_reader.apply_spec_quantities(self.current_parts)
+        # Сбрасываем маркеры конфликта
+        for p in self.current_parts:
+            p.pop("quantity_conflict", None)
+            p.pop("diff", None)
         self._populate_review()
 
     # -----------------------------------------------------------------------
@@ -675,6 +764,19 @@ class ManagerApp(ctk.CTk):
             lbl.pack(side="right")
             self._cost_labels[key] = lbl
 
+        # Кол-во деталей
+        ctk.CTkLabel(left, text="Состав заказа", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(14,4))
+        r0 = ctk.CTkFrame(left, fg_color="transparent")
+        r0.pack(fill="x", padx=12, pady=2)
+        ctk.CTkLabel(r0, text="Позиций (строк):", width=160, anchor="w").pack(side="left")
+        self._lbl_positions_count = ctk.CTkLabel(r0, text="—", width=100, anchor="e")
+        self._lbl_positions_count.pack(side="right")
+        r0b = ctk.CTkFrame(left, fg_color="transparent")
+        r0b.pack(fill="x", padx=12, pady=2)
+        ctk.CTkLabel(r0b, text="Деталей (штук):", width=160, anchor="w").pack(side="left")
+        self._lbl_parts_total = ctk.CTkLabel(r0b, text="—", width=100, anchor="e")
+        self._lbl_parts_total.pack(side="right")
+
         # Веса
         ctk.CTkLabel(left, text="Веса", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(14,4))
         self._weight_labels: Dict[str, ctk.CTkLabel] = {}
@@ -717,6 +819,10 @@ class ManagerApp(ctk.CTk):
 
     def _show_result(self):
         r = self._last_result
+        positions = len(self.current_parts)
+        total_units = sum(int(p.get("quantity", 1)) for p in self.current_parts)
+        self._lbl_positions_count.configure(text=str(positions))
+        self._lbl_parts_total.configure(text=str(total_units))
         self._cost_labels["mat"].configure(text=f"{r.mat_cost:.2f} €")
         self._cost_labels["frame"].configure(text=f"{r.frame_cost:.2f} €")
         self._cost_labels["angle"].configure(text=f"{r.angle_cost:.2f} €")
