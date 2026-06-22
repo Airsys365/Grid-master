@@ -22,7 +22,6 @@ APP_TITLE   = "Grid Master — Менеджер"
 
 
 def _bind_tooltip(widget, text: str):
-    """Показывает всплывающую подсказку при наведении."""
     tip_win = [None]
 
     def show(event):
@@ -45,6 +44,7 @@ def _bind_tooltip(widget, text: str):
 
     widget.bind("<Enter>", show)
     widget.bind("<Leave>", hide)
+
 ORDERS_FILE = "orders_history.json"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 
@@ -93,10 +93,10 @@ class ManagerApp(ctk.CTk):
         self.orders = _load_orders()
         self.api_key = os.environ.get(API_KEY_ENV, self.cfg.get("api_key", ""))
 
-        # Текущий заказ (редактируется на экранах 2-4)
         self.current_parts: List[Dict] = []
         self.current_client = ""
-        self._spec_parts: List[Dict] = []   # позиции из спеки заказчика
+        self._spec_parts: List[Dict] = []
+        self._spec_notes: str = ""   # текстовые замечания из спеки
 
         self._build_ui()
         self._show_screen("history")
@@ -156,6 +156,47 @@ class ManagerApp(ctk.CTk):
             entry.delete(0, "end")
             entry.insert(0, path)
 
+    def _open_settings(self):
+        win = ctk.CTkToplevel(self)
+        win.title("Настройки")
+        win.geometry("500x340")
+        win.grab_set()
+
+        ctk.CTkLabel(win, text="Настройки", font=("Segoe UI", 14, "bold")).pack(pady=14)
+
+        # API ключ
+        api_frame = ctk.CTkFrame(win, fg_color="transparent")
+        api_frame.pack(fill="x", padx=20, pady=6)
+        ctk.CTkLabel(api_frame, text="API ключ Claude:", anchor="w").pack(fill="x")
+        key_row = ctk.CTkFrame(api_frame, fg_color="transparent")
+        key_row.pack(fill="x", pady=(2, 0))
+        api_entry = ctk.CTkEntry(key_row, width=360, show="*")
+        api_entry.insert(0, self.api_key)
+        api_entry.pack(side="left")
+        show_var = ctk.BooleanVar(value=False)
+        def toggle_show():
+            api_entry.configure(show="" if show_var.get() else "*")
+        ctk.CTkCheckBox(key_row, text="👁", variable=show_var, width=40,
+                        command=toggle_show).pack(side="left", padx=6)
+
+        # Excel файлы
+        ctk.CTkButton(win, text="📂 Excel-файлы данных...", width=220,
+                      fg_color="transparent", border_width=1,
+                      command=lambda: [win.destroy(), self._ask_excel_files()]).pack(pady=8)
+
+        def save():
+            self.api_key = api_entry.get().strip()
+            self.cfg["api_key"] = self.api_key
+            pm.save_config(self.cfg)
+            win.destroy()
+            messagebox.showinfo("Сохранено", "Настройки сохранены.")
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(pady=16)
+        ctk.CTkButton(btns, text="Сохранить", width=120, command=save).pack(side="left", padx=8)
+        ctk.CTkButton(btns, text="Отмена", width=100, fg_color="transparent",
+                      border_width=1, command=win.destroy).pack(side="left")
+
     # -----------------------------------------------------------------------
     # Структура UI
     # -----------------------------------------------------------------------
@@ -190,19 +231,8 @@ class ManagerApp(ctk.CTk):
         ctk.CTkButton(top, text="+ Новый заказ", width=140, command=self._new_order).pack(side="right")
         ctk.CTkButton(top, text="⚙ Настройки", width=110,
                       fg_color="transparent", border_width=1,
-                      command=self._ask_excel_files).pack(side="right", padx=8)
+                      command=self._open_settings).pack(side="right", padx=8)
 
-        # API key field
-        api_row = ctk.CTkFrame(s, fg_color="transparent")
-        api_row.pack(fill="x", padx=20, pady=(0, 8))
-        ctk.CTkLabel(api_row, text="API ключ Claude:", width=130, anchor="w").pack(side="left")
-        self._api_entry = ctk.CTkEntry(api_row, width=340, show="*")
-        self._api_entry.insert(0, self.api_key)
-        self._api_entry.pack(side="left", padx=6)
-        ctk.CTkButton(api_row, text="Сохранить", width=90,
-                      command=self._save_api_key).pack(side="left")
-
-        # Список заказов
         list_frame = ctk.CTkScrollableFrame(s, label_text="История заказов")
         list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
         self._history_frame = list_frame
@@ -229,16 +259,11 @@ class ManagerApp(ctk.CTk):
         ctk.CTkButton(row, text="Открыть ▸", width=90,
                       command=lambda o=order: self._open_order(o)).pack(side="right", padx=8, pady=6)
 
-    def _save_api_key(self):
-        self.api_key = self._api_entry.get().strip()
-        self.cfg["api_key"] = self.api_key
-        pm.save_config(self.cfg)
-        messagebox.showinfo("Сохранено", "API ключ сохранён.")
-
     def _new_order(self):
         self.current_parts = []
         self.current_client = ""
         self._spec_parts = []
+        self._spec_notes = ""
         self._client_entry.delete(0, "end")
         self._files_label.configure(text="Файлы не выбраны")
         self._pdf_paths = []
@@ -261,8 +286,12 @@ class ManagerApp(ctk.CTk):
         self._pdf_paths: List[str] = []
         self._spec_path_str = ctk.StringVar(value="")
 
-        ctk.CTkButton(s, text="← Назад", width=80, fg_color="transparent",
-                      command=lambda: self._show_screen("history")).pack(anchor="w", padx=16, pady=12)
+        top = ctk.CTkFrame(s, fg_color="transparent")
+        top.pack(fill="x", padx=16, pady=12)
+        ctk.CTkButton(top, text="← Назад", width=80, fg_color="transparent",
+                      command=lambda: self._show_screen("history")).pack(side="left")
+        ctk.CTkButton(top, text="⚙ Настройки", width=110, fg_color="transparent",
+                      border_width=1, command=self._open_settings).pack(side="right")
 
         ctk.CTkLabel(s, text="Новый заказ", font=("Segoe UI", 18, "bold")).pack(pady=(0, 12))
 
@@ -272,7 +301,6 @@ class ManagerApp(ctk.CTk):
         self._client_entry = ctk.CTkEntry(client_row, width=300, placeholder_text="Название компании / имя")
         self._client_entry.pack(side="left", padx=8)
 
-        # Drop zone
         drop = ctk.CTkFrame(s, width=500, height=140, fg_color=("grey85", "grey25"),
                             corner_radius=16, border_width=2, border_color=("grey70", "grey40"))
         drop.pack(pady=12)
@@ -284,7 +312,6 @@ class ManagerApp(ctk.CTk):
         self._files_label = ctk.CTkLabel(s, text="Файлы не выбраны", text_color="grey")
         self._files_label.pack()
 
-        # Спека заказчика (необязательно)
         spec_row = ctk.CTkFrame(s, fg_color="transparent")
         spec_row.pack(pady=(8, 0))
         ctk.CTkLabel(spec_row, text="Спека заказчика:", width=130, anchor="w").pack(side="left")
@@ -336,10 +363,8 @@ class ManagerApp(ctk.CTk):
         if not self._pdf_paths:
             messagebox.showwarning("Нет файлов", "Сначала выберите PDF-чертежи.")
             return
-        # Берём ключ прямо из поля — не требуем нажатия «Сохранить»
-        self.api_key = self._api_entry.get().strip()
         if not self.api_key:
-            messagebox.showwarning("Нет API ключа", "Введите API ключ Claude на главном экране.")
+            messagebox.showwarning("Нет API ключа", "Введите API ключ в Настройках (⚙).")
             return
         self.cfg["api_key"] = self.api_key
         pm.save_config(self.cfg)
@@ -395,11 +420,14 @@ class ManagerApp(ctk.CTk):
             n = len(self.current_parts)
             self._recog_status.configure(text=f"Распознано {n} поз.", text_color="green")
 
-        # Загрузить спеку и сравнить
         spec_path = self._spec_path_str.get()
         if spec_path and os.path.exists(spec_path):
             try:
-                self._spec_parts = spec_reader.read_spec(spec_path, self.api_key)
+                raw = spec_reader.read_spec(spec_path, self.api_key)
+                # Отделяем текстовые замечания от позиций
+                self._spec_parts = [p for p in raw if p.get("position")]
+                notes_list = [p.get("notes", "") for p in raw if p.get("notes")]
+                self._spec_notes = "\n".join(notes_list)
                 if self._spec_parts and self.current_parts:
                     self.current_parts = spec_reader.compare(self.current_parts, self._spec_parts)
             except Exception as e:
@@ -424,7 +452,6 @@ class ManagerApp(ctk.CTk):
                       fg_color=("#2E8B57", "#2E8B50"),
                       command=self._calculate).pack(side="right")
 
-        # Основная область: слева позиции, справа параметры
         main = ctk.CTkFrame(s, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=16, pady=(0, 8))
         main.columnconfigure(0, weight=3)
@@ -441,12 +468,23 @@ class ManagerApp(ctk.CTk):
         ctk.CTkButton(parts_top, text="+ Добавить", width=90,
                       command=self._add_part_manual).pack(side="right")
         self._apply_spec_btn = ctk.CTkButton(
-            parts_top, text="📋 Применить кол-во из спеки", width=210,
+            parts_top, text="✓ Принять все из спеки", width=190,
             fg_color=("grey70", "grey30"), command=self._apply_spec_quantities)
         self._apply_spec_btn.pack(side="right", padx=6)
 
         self._parts_scroll = ctk.CTkScrollableFrame(left)
         self._parts_scroll.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+
+        # Панель замечаний из спеки (скрыта если пусто)
+        self._notes_frame = ctk.CTkFrame(left, fg_color=("grey85", "grey20"))
+        self._notes_header = ctk.CTkFrame(self._notes_frame, fg_color="transparent")
+        self._notes_header.pack(fill="x", padx=8, pady=(6, 0))
+        ctk.CTkLabel(self._notes_header, text="📝 Замечания из спеки:", font=("Segoe UI", 10, "bold")).pack(side="left")
+        ctk.CTkButton(self._notes_header, text="✕", width=28, fg_color="transparent",
+                      text_color="grey", command=lambda: self._notes_frame.pack_forget()).pack(side="right")
+        self._notes_text = ctk.CTkTextbox(self._notes_frame, height=70, state="disabled",
+                                           font=("Segoe UI", 10))
+        self._notes_text.pack(fill="x", padx=8, pady=6)
 
         # --- Правая колонка: материалы и цены ---
         right = ctk.CTkScrollableFrame(main, label_text="Материалы и цены")
@@ -456,13 +494,11 @@ class ManagerApp(ctk.CTk):
 
     def _build_params_panel(self, parent):
         def combo_row(label, combo):
-            """Метка сверху, комбо снизу — экономит горизонтальное место."""
             r = ctk.CTkFrame(parent, fg_color="transparent")
             r.pack(fill="x", padx=8, pady=(4, 0))
             ctk.CTkLabel(r, text=label, anchor="w", font=("Segoe UI", 10)).pack(fill="x")
             combo.pack(fill="x", pady=(0, 2))
 
-        # Материалы
         ctk.CTkLabel(parent, text="Материалы", font=("Segoe UI", 11, "bold")).pack(
             anchor="w", padx=8, pady=(10, 2))
 
@@ -494,8 +530,7 @@ class ManagerApp(ctk.CTk):
         if last_b in bumper_types: self._bumper_cb.set(last_b)
         elif bumper_types:         self._bumper_cb.set(bumper_types[0])
         combo_row("Отбойник:", self._bumper_cb)
-        last_b = self.cfg.get("last_bumper_type", "")
-        # Цены
+
         ctk.CTkLabel(parent, text="Цены (редактируемые)", font=("Segoe UI", 11, "bold")).pack(
             anchor="w", padx=8, pady=(12, 2))
 
@@ -519,7 +554,6 @@ class ManagerApp(ctk.CTk):
             e.bind("<FocusOut>", lambda ev, k=key: self._on_price_edited(k))
             self._price_entries[key] = e
 
-        # Коэффициенты
         ctk.CTkLabel(parent, text="Прочее", font=("Segoe UI", 11, "bold")).pack(
             anchor="w", padx=8, pady=(12, 2))
 
@@ -553,17 +587,26 @@ class ManagerApp(ctk.CTk):
         pm.set_price(self.cfg, key, val, manual=True)
 
     def _populate_review(self):
-        """Заполняет список позиций из self.current_parts."""
         for w in self._parts_scroll.winfo_children():
             w.destroy()
         for i, part in enumerate(self.current_parts):
             self._part_row(i, part)
 
+        # Показать/скрыть панель замечаний
+        notes = getattr(self, "_spec_notes", "")
+        if notes:
+            self._notes_text.configure(state="normal")
+            self._notes_text.delete("1.0", "end")
+            self._notes_text.insert("1.0", notes)
+            self._notes_text.configure(state="disabled")
+            self._notes_frame.pack(fill="x", padx=6, pady=(0, 4))
+        else:
+            self._notes_frame.pack_forget()
+
     def _part_row(self, idx: int, part: Dict):
         conf = part.get("confidence", "high")
         has_conflict = bool(part.get("quantity_conflict"))
         only_spec = part.get("only_in_spec", False)
-        not_in_spec = not part.get("in_spec", True) and "in_spec" in part
 
         if only_spec:
             bg = ("lightcyan", "#003344")
@@ -579,30 +622,33 @@ class ManagerApp(ctk.CTk):
         row = ctk.CTkFrame(self._parts_scroll, fg_color=bg, corner_radius=6)
         row.pack(fill="x", pady=2, padx=2)
 
-        icon = "🔵" if only_spec else ("⚠️" if (has_conflict or conf != "high") else "✅")
+        icon = "🔵" if only_spec else ("⚠" if (has_conflict or conf != "high") else "✓")
         ctk.CTkLabel(row, text=icon, width=24).pack(side="left", padx=4)
         ctk.CTkLabel(row, text=str(part.get("position", "")), width=160, anchor="w").pack(side="left")
         ctk.CTkLabel(row, text=f"{part.get('length',0)} × {part.get('width',0)} мм", width=130).pack(side="left")
 
-        # Количество: показываем конфликт если есть
+        # Количество + кнопка принять из спеки
         if has_conflict:
             qc = part["quantity_conflict"]
-            qty_text = f"× {part.get('quantity',1)}  (спека: {qc['spec']})"
-            qty_color = ("#b85c00", "#ffaa44")
+            qty_text = f"× {part.get('quantity',1)}"
+            qty_lbl = ctk.CTkLabel(row, text=qty_text, width=60)
+            qty_lbl.configure(text_color=("#b85c00", "#ffaa44"))
+            qty_lbl.pack(side="left")
+            # Кнопка "принять из спеки" прямо в строке
+            spec_qty = qc["spec"]
+            ctk.CTkButton(row, text=f"✓ {spec_qty} из спеки", width=120, height=24,
+                          fg_color=("#2E6B9E", "#1a4a70"),
+                          command=lambda i=idx, q=spec_qty: self._accept_spec_qty(i, q)
+                          ).pack(side="left", padx=4)
         else:
             qty_text = f"× {part.get('quantity', 1)}"
-            qty_color = None
-        qty_lbl = ctk.CTkLabel(row, text=qty_text, width=160)
-        if qty_color:
-            qty_lbl.configure(text_color=qty_color)
-        qty_lbl.pack(side="left")
+            ctk.CTkLabel(row, text=qty_text, width=160).pack(side="left")
 
         ctk.CTkButton(row, text="✏", width=30, fg_color="transparent",
                       command=lambda i=idx: self._edit_part(i)).pack(side="right", padx=4)
         ctk.CTkButton(row, text="✕", width=30, fg_color="transparent", text_color="red",
                       command=lambda i=idx: self._delete_part(i)).pack(side="right")
 
-        # Иконка комментария с тултипом
         notes = part.get("notes", "")
         diffs = part.get("diff", [])
         tooltip_parts = []
@@ -612,10 +658,18 @@ class ManagerApp(ctk.CTk):
             tooltip_parts.append("Расхождения: " + "; ".join(diffs))
         if tooltip_parts:
             tip_text = "\n".join(tooltip_parts)
-            icon_text = "⚠️💬" if diffs else "💬"
+            icon_text = "⚠💬" if diffs else "💬"
             note_lbl = ctk.CTkLabel(row, text=icon_text, width=30, cursor="hand2")
             note_lbl.pack(side="left", padx=(4, 0))
             _bind_tooltip(note_lbl, tip_text)
+
+    def _accept_spec_qty(self, idx: int, qty: int):
+        """Принять количество из спеки для одной позиции."""
+        part = self.current_parts[idx]
+        part["quantity"] = qty
+        part.pop("quantity_conflict", None)
+        part.pop("diff", None)
+        self._populate_review()
 
     def _add_part_manual(self):
         part = {"position": "", "length": 0, "width": 0, "quantity": 1,
@@ -627,29 +681,33 @@ class ManagerApp(ctk.CTk):
         part = self.current_parts[idx]
         win = ctk.CTkToplevel(self)
         win.title("Редактировать позицию")
-        win.geometry("380x320")
+        win.geometry("400x380")
         win.grab_set()
+        win.resizable(False, False)
 
         fields = [
-            ("Позиция/обозначение", "position", str(part.get("position", ""))),
-            ("Длина (мм)",          "length",   str(part.get("length", ""))),
-            ("Ширина (мм)",         "width",    str(part.get("width", ""))),
-            ("Количество",          "quantity", str(part.get("quantity", 1))),
-            ("Радиус (мм)",         "radius",   str(part.get("radius", ""))),
-            ("Доля окружности",     "radius_part", str(part.get("radius_part", "1.0"))),
-            ("Отбойник (мм)",       "bumper",   str(part.get("bumper", ""))),
-            ("Работа (часов)",      "work",     str(part.get("work", ""))),
-            ("Примечание",          "notes",    str(part.get("notes", ""))),
+            ("Позиция/обозначение", "position",    str(part.get("position", ""))),
+            ("Длина (мм)",          "length",       str(part.get("length", ""))),
+            ("Ширина (мм)",         "width",        str(part.get("width", ""))),
+            ("Количество",          "quantity",     str(part.get("quantity", 1))),
+            ("Радиус (мм)",         "radius",       str(part.get("radius", ""))),
+            ("Доля окружности",     "radius_part",  str(part.get("radius_part", "1.0"))),
+            ("Отбойник (мм)",       "bumper",       str(part.get("bumper", ""))),
+            ("Работа (часов)",      "work",         str(part.get("work", ""))),
+            ("Примечание",          "notes",        str(part.get("notes", ""))),
         ]
         entries = {}
+        first_entry = [None]
         for label, key, val in fields:
             r = ctk.CTkFrame(win, fg_color="transparent")
             r.pack(fill="x", padx=16, pady=3)
             ctk.CTkLabel(r, text=label, width=160, anchor="w").pack(side="left")
-            e = ctk.CTkEntry(r, width=160)
+            e = ctk.CTkEntry(r, width=180)
             e.insert(0, val)
             e.pack(side="left")
             entries[key] = e
+            if first_entry[0] is None:
+                first_entry[0] = e
 
         def save():
             for key, e in entries.items():
@@ -663,20 +721,41 @@ class ManagerApp(ctk.CTk):
                 else:
                     part[key] = v
             part["confidence"] = "high"
+            part.pop("quantity_conflict", None)
+            part.pop("diff", None)
             self.current_parts[idx] = part
             self._populate_review()
             win.destroy()
 
-        ctk.CTkButton(win, text="Сохранить", command=save).pack(pady=12)
+        def cancel():
+            # Если позиция новая (пустая) — удалить её
+            if not part.get("position") and part.get("length", 0) == 0:
+                if idx < len(self.current_parts) and self.current_parts[idx] is part:
+                    self.current_parts.pop(idx)
+                    self._populate_review()
+            win.destroy()
+
+        btn_row = ctk.CTkFrame(win, fg_color="transparent")
+        btn_row.pack(pady=12)
+        save_btn = ctk.CTkButton(btn_row, text="Сохранить", width=130, command=save)
+        save_btn.pack(side="left", padx=8)
+        ctk.CTkButton(btn_row, text="Отмена", width=100, fg_color="transparent",
+                      border_width=1, command=cancel).pack(side="left")
+
+        # Enter = сохранить, Escape = отмена
+        win.bind("<Return>", lambda e: save())
+        win.bind("<Escape>", lambda e: cancel())
+
+        if first_entry[0]:
+            first_entry[0].focus_set()
 
     def _delete_part(self, idx: int):
         self.current_parts.pop(idx)
         self._populate_review()
 
     def _apply_spec_quantities(self):
-        """Заменяет количества из спеки заказчика во всех позициях с конфликтом."""
+        """Применяет количества из спеки ко всем позициям с конфликтом."""
         self.current_parts = spec_reader.apply_spec_quantities(self.current_parts)
-        # Сбрасываем маркеры конфликта
         for p in self.current_parts:
             p.pop("quantity_conflict", None)
             p.pop("diff", None)
@@ -753,7 +832,6 @@ class ManagerApp(ctk.CTk):
                       command=lambda: self._show_screen("review")).pack(side="left")
         ctk.CTkLabel(top, text="Результат", font=("Segoe UI", 16, "bold")).pack(side="left", padx=12)
 
-        # Левая часть — таблица себестоимости
         body = ctk.CTkFrame(s, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=16)
         body.columnconfigure(0, weight=2)
@@ -783,7 +861,6 @@ class ManagerApp(ctk.CTk):
             lbl.pack(side="right")
             self._cost_labels[key] = lbl
 
-        # Кол-во деталей
         ctk.CTkLabel(left, text="Состав заказа", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(14,4))
         r0 = ctk.CTkFrame(left, fg_color="transparent")
         r0.pack(fill="x", padx=12, pady=2)
@@ -796,7 +873,6 @@ class ManagerApp(ctk.CTk):
         self._lbl_parts_total = ctk.CTkLabel(r0b, text="—", width=100, anchor="e")
         self._lbl_parts_total.pack(side="right")
 
-        # Веса
         ctk.CTkLabel(left, text="Веса", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(14,4))
         self._weight_labels: Dict[str, ctk.CTkLabel] = {}
         for key, label in [("w_mats","Решётка, кг:"), ("w_frame","Обрамление, кг:"),
@@ -808,7 +884,6 @@ class ManagerApp(ctk.CTk):
             lbl.pack(side="right")
             self._weight_labels[key] = lbl
 
-        # Правая часть — маржа и цена клиенту
         right = ctk.CTkFrame(body)
         right.grid(row=0, column=1, sticky="nsew")
 
@@ -827,7 +902,6 @@ class ManagerApp(ctk.CTk):
         self._cost_per_kg_label = ctk.CTkLabel(right, text="", text_color="grey")
         self._cost_per_kg_label.pack()
 
-        # Кнопки
         btns = ctk.CTkFrame(right, fg_color="transparent")
         btns.pack(pady=20)
         ctk.CTkButton(btns, text="📄 PDF оффер", width=140,
@@ -849,13 +923,11 @@ class ManagerApp(ctk.CTk):
         self._cost_labels["work"].configure(text=f"{r.work_cost:.2f} €")
         self._cost_labels["zinc"].configure(text=f"{r.zinc_cost:.2f} €")
         self._cost_labels["total"].configure(text=f"{r.total_cost:.2f} €")
-
         self._weight_labels["w_mats"].configure(text=f"{r.weight_mats:.2f}")
         self._weight_labels["w_frame"].configure(text=f"{r.weight_frame:.2f}")
         self._weight_labels["w_total"].configure(text=f"{r.total_weight:.2f}")
         self._weight_labels["w_zinc"].configure(text=f"{r.total_weight_with_zinc:.2f}")
         self._cost_per_kg_label.configure(text=f"Себест. €/кг: {r.cost_per_kg:.2f}")
-
         self._update_client_price()
         self._show_screen("result")
 
