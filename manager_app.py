@@ -604,21 +604,24 @@ class ManagerApp(ctk.CTk):
         combo_row("Мат (артикул):", self._mat_cb)
 
         frame_types = [t for t, _ in self.cfg.get("frame_weights", [])]
-        self._frame_cb = ctk.CTkComboBox(parent, values=frame_types or ["—"])
+        self._frame_cb = ctk.CTkComboBox(parent, values=frame_types or ["—"],
+                                          command=lambda v: self._on_material_type_changed("frame", v))
         last_f = self.cfg.get("last_frame_type", "")
         if last_f in frame_types:  self._frame_cb.set(last_f)
         elif frame_types:          self._frame_cb.set(frame_types[0])
         combo_row("Обрамление:", self._frame_cb)
 
         angle_types = [t for t, _ in self.cfg.get("angle_weights", [])]
-        self._angle_cb = ctk.CTkComboBox(parent, values=angle_types or ["—"])
+        self._angle_cb = ctk.CTkComboBox(parent, values=angle_types or ["—"],
+                                          command=lambda v: self._on_material_type_changed("angle", v))
         last_a = self.cfg.get("last_angle_type", "")
         if last_a in angle_types:  self._angle_cb.set(last_a)
         elif angle_types:          self._angle_cb.set(angle_types[0])
         combo_row("Перфоуголок:", self._angle_cb)
 
         bumper_types = [t for t, _ in self.cfg.get("bumper_weights", [])]
-        self._bumper_cb = ctk.CTkComboBox(parent, values=bumper_types or ["—"])
+        self._bumper_cb = ctk.CTkComboBox(parent, values=bumper_types or ["—"],
+                                           command=lambda v: self._on_material_type_changed("bumper", v))
         last_b = self.cfg.get("last_bumper_type", "")
         if last_b in bumper_types: self._bumper_cb.set(last_b)
         elif bumper_types:         self._bumper_cb.set(bumper_types[0])
@@ -700,6 +703,12 @@ class ManagerApp(ctk.CTk):
             e.delete(0, "end")
             e.insert(0, f"{val:.2f}" if val else "")
 
+        # Подставить сохранённые цены для выбранных типов
+        for key, cb_attr in [("frame", "_frame_cb"), ("angle", "_angle_cb"), ("bumper", "_bumper_cb")]:
+            cb = getattr(self, cb_attr, None)
+            if cb:
+                self._on_material_type_changed(key, cb.get())
+
     def _on_mat_changed(self, article: str):
         spec = pm.get_mat_spec(self.cfg, article)
         if spec:
@@ -711,12 +720,33 @@ class ManagerApp(ctk.CTk):
             self.cfg["prices"]["mat"]["manual_override"] = False
             self.cfg["last_mat_article"] = article
 
+    def _on_material_type_changed(self, key: str, type_name: str):
+        """Смена типа обрамления/перфоуголка/отбойника — подставить сохранённую цену."""
+        saved = self.cfg.get("type_prices", {}).get(key, {})
+        if type_name in saved:
+            e = self._price_entries.get(key)
+            if e:
+                e.delete(0, "end")
+                e.insert(0, f"{saved[type_name]:.2f}")
+
     def _on_price_edited(self, key: str):
         e = self._price_entries.get(key)
         if not e:
             return
         val = _float(e.get())
         pm.set_price(self.cfg, key, val, manual=True)
+        # Запомнить цену для текущего типа (для frame/angle/bumper)
+        cb_map = {"frame": "_frame_cb", "angle": "_angle_cb", "bumper": "_bumper_cb"}
+        if key in cb_map:
+            cb = getattr(self, cb_map[key], None)
+            if cb:
+                type_name = cb.get()
+                if "type_prices" not in self.cfg:
+                    self.cfg["type_prices"] = {}
+                if key not in self.cfg["type_prices"]:
+                    self.cfg["type_prices"][key] = {}
+                self.cfg["type_prices"][key][type_name] = val
+                pm.save_config(self.cfg)
 
     def _populate_review(self):
         for w in self._parts_scroll.winfo_children():
