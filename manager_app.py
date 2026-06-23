@@ -702,11 +702,14 @@ class ManagerApp(ctk.CTk):
 
     def _on_mat_changed(self, article: str):
         spec = pm.get_mat_spec(self.cfg, article)
-        if spec and not self.cfg["prices"]["mat"]["manual_override"]:
+        if spec:
             e = self._price_entries.get("mat")
             if e:
                 e.delete(0, "end")
                 e.insert(0, f"{spec['price_per_m2']:.2f}")
+            # Сбрасываем manual_override — артикул сменился, цена из таблицы актуальна
+            self.cfg["prices"]["mat"]["manual_override"] = False
+            self.cfg["last_mat_article"] = article
 
     def _on_price_edited(self, key: str):
         e = self._price_entries.get(key)
