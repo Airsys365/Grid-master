@@ -272,6 +272,9 @@ class ManagerApp(ctk.CTk):
         ctk.CTkButton(top, text="⚙ Настройки", width=110,
                       fg_color="transparent", border_width=1,
                       command=self._open_settings).pack(side="right", padx=8)
+        ctk.CTkButton(top, text="🪜 Ступеньки", width=120,
+                      fg_color="transparent", border_width=1,
+                      command=self._open_steps).pack(side="right", padx=8)
 
         list_frame = ctk.CTkScrollableFrame(s, label_text="История заказов")
         list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
@@ -298,6 +301,11 @@ class ManagerApp(ctk.CTk):
                      font=("Segoe UI", 12, "bold"), width=120).pack(side="left")
         ctk.CTkButton(row, text="Открыть ▸", width=90,
                       command=lambda o=order: self._open_order(o)).pack(side="right", padx=8, pady=6)
+
+    def _open_steps(self):
+        import price_manager as _pm
+        from steps_app import open_steps_window
+        open_steps_window(self.root, self.cfg, _pm.save_config)
 
     def _new_order(self):
         self.current_parts = []
