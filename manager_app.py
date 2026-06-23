@@ -161,7 +161,7 @@ class ManagerApp(ctk.CTk):
     def _open_settings(self):
         win = ctk.CTkToplevel(self)
         win.title("Настройки")
-        win.geometry("500x340")
+        win.geometry("520x580")
         win.grab_set()
 
         ctk.CTkLabel(win, text="Настройки", font=("Segoe UI", 14, "bold")).pack(pady=14)
@@ -186,9 +186,47 @@ class ManagerApp(ctk.CTk):
                       fg_color="transparent", border_width=1,
                       command=lambda: [win.destroy(), self._ask_excel_files()]).pack(pady=8)
 
+        # ── Нормативы трудозатрат ──────────────────────────────────────────
+        norms_frame = ctk.CTkFrame(win, border_width=1)
+        norms_frame.pack(fill="x", padx=20, pady=(8, 4))
+        ctk.CTkLabel(norms_frame, text="Нормативы трудозатрат",
+                     font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(8, 4))
+
+        norms_cfg = self.cfg.get("labour_norms", {})
+        norm_fields = [
+            ("t_straight_h_per_m",   "Прямой рез (ч/м):",         "0.02"),
+            ("t_diagonal_h_per_cut", "Косой рез (ч/штуку):",       "0.05"),
+            ("t_arc_h_per_m",        "Радиус-дуга (ч/м):",         "0.15"),
+            ("complexity_k",         "Коэфф. сложности k:",        "0.30"),
+            ("min_hours_per_part",   "Минимум часов на деталь:",    "0.05"),
+        ]
+        norm_entries = {}
+        for key, label, default in norm_fields:
+            row = ctk.CTkFrame(norms_frame, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=2)
+            ctk.CTkLabel(row, text=label, width=210, anchor="w").pack(side="left")
+            e = ctk.CTkEntry(row, width=90)
+            e.insert(0, str(norms_cfg.get(key, default)))
+            e.pack(side="left")
+            norm_entries[key] = e
+
+        ctk.CTkLabel(norms_frame,
+                     text="Значения сохраняются и не требуют повторного ввода.",
+                     font=("Segoe UI", 10), text_color="gray").pack(anchor="w", padx=12, pady=(2, 8))
+
         def save():
             self.api_key = api_entry.get().strip()
             self.cfg["api_key"] = self.api_key
+            # Сохраняем нормативы
+            norms = {}
+            for key, e in norm_entries.items():
+                try:
+                    norms[key] = float(e.get().strip().replace(",", "."))
+                except ValueError:
+                    pass  # оставляем прежнее значение если введено некорректно
+            existing = self.cfg.get("labour_norms", {})
+            existing.update(norms)
+            self.cfg["labour_norms"] = existing
             pm.save_config(self.cfg)
             win.destroy()
             messagebox.showinfo("Сохранено", "Настройки сохранены.")
@@ -413,6 +451,25 @@ class ManagerApp(ctk.CTk):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _auto_fill_work(self, parts: list) -> None:
+        """Заполняет поле work для деталей, у которых оно равно 0 или не задано."""
+        norms = self.cfg.get("labour_norms", {})
+        for p in parts:
+            if not p.get("work"):
+                tmp = core.Part(
+                    position=str(p.get("position", "")),
+                    length=float(p.get("length", 0) or 0),
+                    width=float(p.get("width", 0) or 0),
+                    quantity=int(p.get("quantity", 1) or 1),
+                    angle=str(p.get("angle", "0")),
+                    bumper=float(p.get("bumper", 0) or 0),
+                    work=0.0,
+                    radius=float(p.get("radius", 0) or 0),
+                    radius_part=float(p.get("radius_part", 1.0) or 1.0),
+                    length2=float(p.get("length2", 0) or 0),
+                )
+                p["work"] = core.calc_work_hours(tmp, norms)
+
     def _on_recognition_done(self):
         self._recog_btn.configure(state="normal", text="Распознать →")
         if not self.current_parts:
@@ -435,6 +492,7 @@ class ManagerApp(ctk.CTk):
             except Exception as e:
                 messagebox.showwarning("Спека", f"Не удалось прочитать спеку:\n{e}")
 
+        self._auto_fill_work(self.current_parts)
         self._populate_review()
         self._show_screen("review")
 
@@ -714,7 +772,7 @@ class ManagerApp(ctk.CTk):
 
     def _add_part_manual(self):
         part = {"position": "", "length": 0, "width": 0, "quantity": 1,
-                "notes": "", "confidence": "high"}
+                "work": 0.0, "notes": "", "confidence": "high"}
         self.current_parts.append(part)
         self._edit_part(len(self.current_parts) - 1)
 
@@ -722,34 +780,68 @@ class ManagerApp(ctk.CTk):
         part = self.current_parts[idx]
         win = ctk.CTkToplevel(self)
         win.title("Редактировать позицию")
-        win.geometry("400x380")
+        win.geometry("440x420")
         win.grab_set()
         win.resizable(False, False)
 
+        # Поля без "Работа" — они рендерятся отдельно с кнопкой пересчёта
         fields = [
-            ("Позиция/обозначение", "position",    str(part.get("position", ""))),
-            ("Длина (мм)",          "length",       str(part.get("length", ""))),
-            ("Длина 2 (мм, трапеция)", "length2",  str(part.get("length2", "") or "")),
-            ("Ширина (мм)",         "width",        str(part.get("width", ""))),
-            ("Количество",          "quantity",     str(part.get("quantity", 1))),
-            ("Радиус (мм)",         "radius",       str(part.get("radius", ""))),
-            ("Доля окружности",     "radius_part",  str(part.get("radius_part", "1.0"))),
-            ("Отбойник (мм)",       "bumper",       str(part.get("bumper", ""))),
-            ("Работа (часов)",      "work",         str(part.get("work", ""))),
-            ("Примечание",          "notes",        str(part.get("notes", ""))),
+            ("Позиция/обозначение",    "position",    str(part.get("position", ""))),
+            ("Длина (мм)",             "length",       str(part.get("length", ""))),
+            ("Длина 2 (мм, трапеция)", "length2",      str(part.get("length2", "") or "")),
+            ("Ширина (мм)",            "width",        str(part.get("width", ""))),
+            ("Количество",             "quantity",     str(part.get("quantity", 1))),
+            ("Радиус (мм)",            "radius",       str(part.get("radius", ""))),
+            ("Доля окружности",        "radius_part",  str(part.get("radius_part", "1.0"))),
+            ("Отбойник (мм)",          "bumper",       str(part.get("bumper", ""))),
+            ("Примечание",             "notes",        str(part.get("notes", ""))),
         ]
         entries = {}
         first_entry = [None]
         for label, key, val in fields:
             r = ctk.CTkFrame(win, fg_color="transparent")
             r.pack(fill="x", padx=16, pady=3)
-            ctk.CTkLabel(r, text=label, width=160, anchor="w").pack(side="left")
+            ctk.CTkLabel(r, text=label, width=170, anchor="w").pack(side="left")
             e = ctk.CTkEntry(r, width=180)
             e.insert(0, val)
             e.pack(side="left")
             entries[key] = e
             if first_entry[0] is None:
                 first_entry[0] = e
+
+        # Строка "Работа" — поле + кнопка пересчёта
+        work_row = ctk.CTkFrame(win, fg_color="transparent")
+        work_row.pack(fill="x", padx=16, pady=3)
+        ctk.CTkLabel(work_row, text="Работа (часов):", width=170, anchor="w").pack(side="left")
+        work_entry = ctk.CTkEntry(work_row, width=110)
+        work_entry.insert(0, str(part.get("work", "")))
+        work_entry.pack(side="left")
+        entries["work"] = work_entry
+
+        def _recalc_work():
+            """Пересчитать нормо-часы по текущим значениям полей."""
+            try:
+                tmp = core.Part(
+                    position=entries["position"].get(),
+                    length=float(entries["length"].get() or 0),
+                    width=float(entries["width"].get() or 0),
+                    quantity=int(float(entries["quantity"].get() or 1)),
+                    angle=str(part.get("angle", "0")),
+                    bumper=float(entries["bumper"].get() or 0),
+                    work=0.0,
+                    radius=float(entries["radius"].get() or 0),
+                    radius_part=float(entries["radius_part"].get() or 1.0),
+                    length2=float(entries["length2"].get() or 0),
+                )
+                h = core.calc_work_hours(tmp, self.cfg.get("labour_norms", {}))
+                work_entry.delete(0, "end")
+                work_entry.insert(0, str(h))
+            except Exception:
+                pass
+
+        ctk.CTkButton(work_row, text="↻", width=36, height=28,
+                      fg_color="transparent", border_width=1,
+                      command=_recalc_work).pack(side="left", padx=(6, 0))
 
         def save():
             for key, e in entries.items():
