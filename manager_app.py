@@ -117,7 +117,7 @@ class ManagerApp(ctk.CTk):
     def _ask_excel_files(self):
         win = ctk.CTkToplevel(self)
         win.title("Настройка — файлы данных")
-        win.geometry("560x380")
+        win.geometry("560x430")
         win.grab_set()
 
         ctk.CTkLabel(win, text="Укажите Excel-файлы с данными", font=("Segoe UI", 14, "bold")).pack(pady=14)
@@ -128,6 +128,7 @@ class ManagerApp(ctk.CTk):
             "angle_weight":  "Веса перфоуголка (Размер, Вес):",
             "bumper_weight": "Веса отбойника (Размер, Вес):",
             "strip_types":   "Типы полос/Название, Ширина, Толщина (необязательно):",
+            "sides":         "Боковины ступеней (Размер, Ширина, Вес, Цена — необязательно):",
         }
         entries = {}
         for key, label in fields.items():
@@ -305,7 +306,7 @@ class ManagerApp(ctk.CTk):
     def _open_steps(self):
         import price_manager as _pm
         from steps_app import open_steps_window
-        open_steps_window(self.root, self.cfg, _pm.save_config)
+        open_steps_window(self, self.cfg, _pm.save_config)
 
     def _new_order(self):
         self.current_parts = []
