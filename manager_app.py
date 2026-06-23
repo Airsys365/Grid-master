@@ -309,6 +309,7 @@ class ManagerApp(ctk.CTk):
         self._pdf_paths = []
         self._spec_path_str.set("")
         self._spec_label.configure(text="не выбрана", text_color="grey")
+        self._update_to_review_btn()
         self._show_screen("upload")
 
     def _open_order(self, order: Dict):
@@ -374,6 +375,13 @@ class ManagerApp(ctk.CTk):
 
         self._recog_status = ctk.CTkLabel(s, text="", text_color="grey")
         self._recog_status.pack()
+
+        # Кнопка «К проверке» — видна только если уже есть распознанные детали
+        self._to_review_btn = ctk.CTkButton(
+            s, text="→ К проверке позиций", width=220,
+            fg_color=("#2E6B9E", "#1a4a70"),
+            command=lambda: self._show_screen("review"))
+        # показывается/скрывается через _update_to_review_btn()
 
     def _choose_files(self):
         paths = filedialog.askopenfilenames(
@@ -451,6 +459,13 @@ class ManagerApp(ctk.CTk):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _update_to_review_btn(self):
+        """Показывает кнопку «→ К проверке» если есть распознанные позиции."""
+        if self.current_parts:
+            self._to_review_btn.pack(pady=(4, 8))
+        else:
+            self._to_review_btn.pack_forget()
+
     def _recalc_all_work(self):
         """Пересчитывает нормо-часы для ВСЕХ текущих деталей по актуальным нормативам."""
         if not self.current_parts:
@@ -504,6 +519,7 @@ class ManagerApp(ctk.CTk):
                 messagebox.showwarning("Спека", f"Не удалось прочитать спеку:\n{e}")
 
         self._auto_fill_work(self.current_parts)
+        self._update_to_review_btn()
         self._populate_review()
         self._show_screen("review")
 
