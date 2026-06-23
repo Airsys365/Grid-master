@@ -1041,6 +1041,18 @@ class ManagerApp(ctk.CTk):
         self._lbl_parts_total = ctk.CTkLabel(r0b, text="—", width=100, anchor="e")
         self._lbl_parts_total.pack(side="right")
 
+        r0c = ctk.CTkFrame(left, fg_color="transparent")
+        r0c.pack(fill="x", padx=12, pady=2)
+        ctk.CTkLabel(r0c, text="Матов (+15%), листов:", width=160, anchor="w").pack(side="left")
+        self._lbl_mats_count = ctk.CTkLabel(r0c, text="—", width=100, anchor="e")
+        self._lbl_mats_count.pack(side="right")
+
+        r0d = ctk.CTkFrame(left, fg_color="transparent")
+        r0d.pack(fill="x", padx=12, pady=2)
+        ctk.CTkLabel(r0d, text="Перфоуголок (3м), шт:", width=160, anchor="w").pack(side="left")
+        self._lbl_angle_pcs = ctk.CTkLabel(r0d, text="—", width=100, anchor="e")
+        self._lbl_angle_pcs.pack(side="right")
+
         ctk.CTkLabel(left, text="Веса", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(14,4))
         self._weight_labels: Dict[str, ctk.CTkLabel] = {}
         for key, label in [("w_mats","Решётка, кг:"), ("w_frame","Обрамление, кг:"),
@@ -1086,6 +1098,10 @@ class ManagerApp(ctk.CTk):
         total_units = sum(int(p.get("quantity", 1)) for p in self.current_parts)
         self._lbl_positions_count.configure(text=str(positions))
         self._lbl_parts_total.configure(text=str(total_units))
+        self._lbl_mats_count.configure(text=str(r.mats_count_with_k))
+        import math as _math
+        angle_pcs = _math.ceil(r.angle_length_m / 3.0) if r.angle_length_m > 0 else 0
+        self._lbl_angle_pcs.configure(text=str(angle_pcs))
         self._cost_labels["mat"].configure(text=f"{r.mat_cost:.2f} €")
         self._cost_labels["frame"].configure(text=f"{r.frame_cost:.2f} €")
         self._cost_labels["angle"].configure(text=f"{r.angle_cost:.2f} €")
