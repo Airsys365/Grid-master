@@ -29,6 +29,53 @@ def weight_per_m(table: List[Tuple[str, float]], type_name: str) -> float:
     return 0.0
 
 
+def calc_work_hours(part: "Part", norms: dict) -> float:
+    """Автоматически рассчитывает нормо-часы на одну деталь по нормативам.
+
+    Компоненты:
+      прямой периметр реза × t_straight_h_per_m
+      + дуга радиуса × t_arc_h_per_m
+      + количество косых резов × t_diagonal_h_per_cut
+      × коэфф. сложности (обратный корень от площади)
+    """
+    t_straight = float(norms.get("t_straight_h_per_m",   0.02))
+    t_diagonal = float(norms.get("t_diagonal_h_per_cut", 0.05))
+    t_arc      = float(norms.get("t_arc_h_per_m",        0.15))
+    comp_k     = float(norms.get("complexity_k",         0.30))
+    min_h      = float(norms.get("min_hours_per_part",   0.05))
+
+    length  = parse_num(part.length)
+    width   = parse_num(part.width)
+    length2 = parse_num(part.length2)
+    radius  = parse_num(part.radius)
+    rad_part = parse_num(part.radius_part) or 1.0
+
+    # Периметр прямых резов (мм)
+    if length2 > 0:
+        # Трапеция: два прямых длинных реза + две ширины; одна сторона — косая
+        straight_mm = length + length2 + 2 * width
+        n_diagonal = 1
+    else:
+        straight_mm = 2 * (length + width)
+        n_diagonal = 0
+
+    # Дуга радиуса (мм) — ручной рез, вместо части прямого периметра
+    arc_mm = 2 * math.pi * radius * rad_part if radius > 0 else 0.0
+    # Дуга заменяет часть прямого периметра, не добавляется к нему
+    straight_mm = max(0.0, straight_mm - arc_mm)
+
+    straight_h = (straight_mm / 1000.0) * t_straight
+    arc_h      = (arc_mm / 1000.0) * t_arc
+    diagonal_h = n_diagonal * t_diagonal
+
+    # Коэфф. сложности: маленькие детали пропорционально дороже
+    area_m2 = (length * width) / 1_000_000.0
+    complexity = max(1.0, comp_k / math.sqrt(area_m2)) if area_m2 > 0 else 1.0
+
+    hours = (straight_h + arc_h + diagonal_h) * complexity
+    return max(min_h, round(hours, 3))
+
+
 # ---------------------------------------------------------------------------
 # Структуры данных
 # ---------------------------------------------------------------------------

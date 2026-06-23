@@ -111,6 +111,19 @@ def _default_config() -> Dict:
         "last_angle_type":  "",
         "last_bumper_type": "",
         "margin_pct": 35.0,
+        "labour_norms": {
+            # время в часах на погонный метр прямого реза (пила/УШМ)
+            "t_straight_h_per_m":   0.02,
+            # доп. время в часах на один косой рез (трапеция)
+            "t_diagonal_h_per_cut": 0.05,
+            # время в часах на погонный метр дуги радиуса (ручная резка)
+            "t_arc_h_per_m":        0.15,
+            # коэфф. сложности: чем меньше площадь, тем больше накладные расходы
+            # complexity = max(1.0, k / sqrt(area_m2))
+            "complexity_k":         0.30,
+            # минимум часов на любую деталь (независимо от размера)
+            "min_hours_per_part":   0.05,
+        },
     }
 
 
@@ -125,6 +138,11 @@ def load_config() -> Dict:
         for k, v in default.items():
             if k not in cfg:
                 cfg[k] = v
+            elif isinstance(v, dict) and isinstance(cfg[k], dict):
+                # Вложенные dict: добавляем только отсутствующие подключи
+                for sk, sv in v.items():
+                    if sk not in cfg[k]:
+                        cfg[k][sk] = sv
         return cfg
     except Exception:
         return _default_config()
