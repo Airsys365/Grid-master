@@ -799,7 +799,8 @@ class ManagerApp(ctk.CTk):
         l2 = part.get("length2", 0) or 0
         size_str = (f"{part.get('length',0)}/{l2} × {part.get('width',0)} мм"
                     if l2 else f"{part.get('length',0)} × {part.get('width',0)} мм")
-        ctk.CTkLabel(row, text=size_str, width=140).pack(side="left")
+        has_override = bool(part.get("frame_override", 0) or part.get("bumper_override", 0))
+        ctk.CTkLabel(row, text=size_str + (" ✎" if has_override else ""), width=160).pack(side="left")
 
         # Количество + кнопка принять из спеки
         if has_conflict:
@@ -869,6 +870,8 @@ class ManagerApp(ctk.CTk):
             ("Радиус (мм)",            "radius",       str(part.get("radius", ""))),
             ("Доля окружности",        "radius_part",  str(part.get("radius_part", "1.0"))),
             ("Отбойник (мм)",          "bumper",       str(part.get("bumper", ""))),
+            ("Обрамление вручную (мм)", "frame_override",  str(part.get("frame_override", "") or "")),
+            ("Кикплейт вручную (мм)",   "bumper_override", str(part.get("bumper_override", "") or "")),
             ("Примечание",             "notes",        str(part.get("notes", ""))),
         ]
         entries = {}
@@ -923,7 +926,7 @@ class ManagerApp(ctk.CTk):
                 v = e.get().strip()
                 if key in ("length", "length2", "width", "quantity"):
                     part[key] = int(_float(v) or 0)
-                elif key in ("radius", "bumper", "work"):
+                elif key in ("radius", "bumper", "work", "frame_override", "bumper_override"):
                     part[key] = _float(v)
                 elif key == "radius_part":
                     part[key] = _float(v) or 1.0
@@ -990,6 +993,8 @@ class ManagerApp(ctk.CTk):
                 radius_part=float(p.get("radius_part", 1.0)),
                 subtract_bumper=bool(p.get("subtract_bumper", True)),
                 bumper_length=float(p.get("bumper_length", 0)),
+                frame_override=float(p.get("frame_override", 0) or 0),
+                bumper_override=float(p.get("bumper_override", 0) or 0),
             ))
 
         article = self._mat_cb.get()
