@@ -63,6 +63,23 @@ def load_weight_table(path: str) -> List[Tuple[str, float]]:
     return result
 
 
+def load_side_data(path: str) -> List[Dict]:
+    """Загружает Боковины (Размер, Ширина, Вес, Цена)."""
+    df = _read_excel_safe(path)
+    result = []
+    for _, row in df.iterrows():
+        name = str(row.get("Размер", "")).strip()
+        if not name:
+            continue
+        result.append({
+            "name":       name,
+            "width_mm":   _to_float(row.get("Ширина", 0)),
+            "weight_kg":  _to_float(row.get("Вес", 0)),
+            "price_eur":  _to_float(row.get("Цена", 0)),
+        })
+    return result
+
+
 def load_strip_types(path: str) -> List[Dict]:
     """Загружает типы полос (Название, Ширина, Толщина)."""
     df = _read_excel_safe(path)
@@ -90,6 +107,7 @@ def _default_config() -> Dict:
             "angle_weight": "",   # веса перфоуголка
             "bumper_weight": "",  # веса отбойника
             "strip_types":  "",   # типы полос
+            "sides":        "",   # боковины ступенек
         },
         "excel_mtime": {},        # path → mtime при последней загрузке
         "mat_data":    [],
@@ -97,6 +115,13 @@ def _default_config() -> Dict:
         "angle_weights": [],
         "bumper_weights": [],
         "strip_types":  [],
+        "side_data":    [],
+        "steps_prices": {
+            "zinc_eur_kg":      0.0,
+            "angle_eur_m":      0.0,
+            "kickplate_eur_kg": 0.0,
+            "work_eur_h":       0.0,
+        },
         "prices": {
             # каждая цена: {"value": float, "manual_override": bool}
             "mat":    {"value": 0.0, "manual_override": False},
@@ -210,6 +235,9 @@ def reload_excel(cfg: Dict) -> Dict:
 
     if files.get("strip_types") and os.path.exists(files["strip_types"]):
         cfg["strip_types"] = load_strip_types(files["strip_types"])
+
+    if files.get("sides") and os.path.exists(files["sides"]):
+        cfg["side_data"] = load_side_data(files["sides"])
 
     # Обновляем mtime
     mtime_map = {}
