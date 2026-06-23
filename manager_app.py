@@ -451,6 +451,17 @@ class ManagerApp(ctk.CTk):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _recalc_all_work(self):
+        """Пересчитывает нормо-часы для ВСЕХ текущих деталей по актуальным нормативам."""
+        if not self.current_parts:
+            return
+        norms = self.cfg.get("labour_norms", {})
+        for p in self.current_parts:
+            p["work"] = 0.0  # сбросить, чтобы _auto_fill_work пересчитал
+        self._auto_fill_work(self.current_parts)
+        self._populate_review()
+        messagebox.showinfo("Готово", f"Трудозатраты пересчитаны для {len(self.current_parts)} позиций.")
+
     def _auto_fill_work(self, parts: list) -> None:
         """Заполняет поле work для деталей, у которых оно равно 0 или не задано."""
         norms = self.cfg.get("labour_norms", {})
@@ -511,6 +522,12 @@ class ManagerApp(ctk.CTk):
         ctk.CTkButton(top, text="Рассчитать →", width=140,
                       fg_color=("#2E8B57", "#2E8B50"),
                       command=self._calculate).pack(side="right")
+        ctk.CTkButton(top, text="↻ Трудозатраты", width=130, fg_color="transparent",
+                      border_width=1,
+                      command=self._recalc_all_work).pack(side="right", padx=6)
+        ctk.CTkButton(top, text="⚙ Настройки", width=110, fg_color="transparent",
+                      border_width=1,
+                      command=self._open_settings).pack(side="right", padx=4)
 
         main = ctk.CTkFrame(s, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=16, pady=(0, 8))
