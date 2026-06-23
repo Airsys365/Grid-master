@@ -95,6 +95,8 @@ class Part:
     subtract_bumper: bool = True
     bumper_length: float = 0.0
     length2: float = 0.0    # мм, вторая параллельная сторона (трапеция; 0 = прямоугольник)
+    frame_override: float = 0.0   # если > 0, заменяет авторасчёт длины обрамления (мм)
+    bumper_override: float = 0.0  # если > 0, заменяет авторасчёт длины кикплейта (мм)
 
 
 @dataclass
@@ -186,6 +188,9 @@ def _bumper_lengths(bumper_mm: float, radius: float, radius_part: float = 1.0) -
 def _frame_length_m(parts: List[Part]) -> float:
     total = 0.0
     for p in parts:
+        if p.frame_override > 0:
+            total += (p.frame_override / 1000.0) * p.quantity
+            continue
         linear_mm, total_bumper_mm = _bumper_lengths(p.bumper, p.radius, p.radius_part)
         if p.length2 > 0:
             # Трапеция: три стороны = L1 + L2 + W (четвёртая — скошенная, считается вручную)
@@ -220,6 +225,9 @@ def _bumper_length_m(parts: List[Part]) -> float:
     """Суммарная длина кикплейта: прямая часть + дуги радиусов."""
     total = 0.0
     for p in parts:
+        if p.bumper_override > 0:
+            total += (p.bumper_override / 1000.0) * p.quantity
+            continue
         _, total_mm = _bumper_lengths(p.bumper, p.radius, p.radius_part)
         total += (total_mm / 1000.0) * p.quantity
     return round(total, 2)
