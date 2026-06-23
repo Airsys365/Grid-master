@@ -1120,6 +1120,8 @@ class ManagerApp(ctk.CTk):
         ctk.CTkButton(btns, text="📄 PDF оффер", width=140,
                       fg_color=("#2E8B57", "#2E8B50"),
                       command=self._export_pdf).pack(pady=6)
+        ctk.CTkButton(btns, text="📊 Экспорт в Excel", width=140,
+                      command=self._export_xlsx).pack(pady=6)
         ctk.CTkButton(btns, text="✂️ Раскрой матов", width=140,
                       command=self._cutting_dialog).pack(pady=6)
         ctk.CTkButton(btns, text="💾 Сохранить заказ", width=140,
@@ -1330,6 +1332,146 @@ class ManagerApp(ctk.CTk):
                       command=win.destroy).pack(side="right", padx=8)
 
         draw(0)
+
+    def _export_xlsx(self):
+        if not hasattr(self, "_last_result"):
+            return
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from datetime import datetime
+        import math as _math
+
+        r = self._last_result
+        client = self.current_client or "project"
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        margin = _float(self._margin_var.get()) or 0.0
+        client_price = round(r.total_cost * (1 + margin / 100), 2)
+        angle_pcs = _math.ceil(r.angle_length_m / 3.0) if r.angle_length_m > 0 else 0
+
+        wb = openpyxl.Workbook()
+
+        # ── Лист 1: Позиции (для склада) ────────────────────────────────────
+        ws1 = wb.active
+        ws1.title = "Позиции"
+
+        hdr_fill = PatternFill("solid", fgColor="2E6B9E")
+        hdr_font = Font(bold=True, color="FFFFFF")
+        thin = Side(style="thin")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        headers = ["№", "Позиция", "Длина (мм)", "Длина 2 (мм)", "Ширина (мм)",
+                   "Кол-во", "Радиус (мм)", "Доля окружн.", "Отбойник (мм)",
+                   "Норм.-часов/шт", "Норм.-часов итого", "Примечание"]
+        col_widths = [5, 16, 12, 12, 12, 8, 12, 12, 13, 16, 17, 24]
+
+        for col, (h, w) in enumerate(zip(headers, col_widths), 1):
+            cell = ws1.cell(row=1, column=col, value=h)
+            cell.font = hdr_font
+            cell.fill = hdr_fill
+            cell.alignment = Alignment(horizontal="center", wrap_text=True)
+            cell.border = border
+            ws1.column_dimensions[cell.column_letter].width = w
+
+        ws1.row_dimensions[1].height = 30
+
+        for i, p in enumerate(self.current_parts, 1):
+            qty = int(p.get("quantity", 1))
+            work_per = float(p.get("work", 0))
+            row_data = [
+                i,
+                str(p.get("position", "")),
+                int(p.get("length", 0)),
+                int(p.get("length2", 0)) or "",
+                int(p.get("width", 0)),
+                qty,
+                float(p.get("radius", 0)) or "",
+                float(p.get("radius_part", 1.0)) if p.get("radius") else "",
+                float(p.get("bumper", 0)) or "",
+                round(work_per, 3),
+                round(work_per * qty, 3),
+                str(p.get("notes", "")),
+            ]
+            for col, val in enumerate(row_data, 1):
+                cell = ws1.cell(row=i + 1, column=col, value=val)
+                cell.alignment = Alignment(horizontal="center")
+                cell.border = border
+
+        # Итоговая строка трудозатрат
+        total_work = sum(float(p.get("work", 0)) * int(p.get("quantity", 1))
+                         for p in self.current_parts)
+        last_row = len(self.current_parts) + 2
+        ws1.cell(row=last_row, column=10, value="ИТОГО часов:")
+        ws1.cell(row=last_row, column=10).font = Font(bold=True)
+        ws1.cell(row=last_row, column=11, value=round(total_work, 2)).font = Font(bold=True)
+
+        # ── Лист 2: Сводка (себестоимость, материалы) ───────────────────────
+        ws2 = wb.create_sheet("Сводка")
+        ws2.column_dimensions["A"].width = 28
+        ws2.column_dimensions["B"].width = 18
+
+        def _row(label, value, bold=False):
+            r_idx = ws2.max_row + 1
+            c1 = ws2.cell(row=r_idx, column=1, value=label)
+            c2 = ws2.cell(row=r_idx, column=2, value=value)
+            if bold:
+                c1.font = Font(bold=True)
+                c2.font = Font(bold=True)
+            c2.alignment = Alignment(horizontal="right")
+
+        ws2.cell(row=1, column=1, value="Проект").font = Font(bold=True, size=13)
+        ws2.cell(row=1, column=2, value=client)
+        ws2.cell(row=2, column=1, value="Дата")
+        ws2.cell(row=2, column=2, value=date_str)
+        ws2.append([])
+
+        ws2.cell(row=ws2.max_row + 1, column=1,
+                  value="СЕБЕСТОИМОСТЬ").font = Font(bold=True, color="2E6B9E")
+        _row("Маты (+15%)", f"{r.mat_cost:.2f} €")
+        _row("Обрамление", f"{r.frame_cost:.2f} €")
+        _row("Перфоуголок", f"{r.angle_cost:.2f} €")
+        _row("Отбойник", f"{r.bumper_cost:.2f} €")
+        _row("Работа", f"{r.work_cost:.2f} €")
+        _row("Цинкование", f"{r.zinc_cost:.2f} €")
+        _row("ИТОГО себест.", f"{r.total_cost:.2f} €", bold=True)
+        ws2.append([])
+
+        ws2.cell(row=ws2.max_row + 1, column=1,
+                  value="МАТЕРИАЛЫ").font = Font(bold=True, color="2E6B9E")
+        _row("Матов листов (+15%)", r.mats_count_with_k)
+        _row("Обрамление, м", f"{r.frame_length_m:.2f}")
+        _row("Перфоуголок, м", f"{r.angle_length_m:.2f}")
+        _row("Перфоуголок (3м), шт", angle_pcs)
+        _row("Отбойник, м", f"{r.bumper_length_m:.2f}")
+        ws2.append([])
+
+        ws2.cell(row=ws2.max_row + 1, column=1,
+                  value="ВЕСА").font = Font(bold=True, color="2E6B9E")
+        _row("Решётка, кг", f"{r.weight_mats:.2f}")
+        _row("Обрамление, кг", f"{r.weight_frame:.2f}")
+        _row("Общий вес, кг", f"{r.total_weight:.2f}")
+        _row("С цинком (+10%), кг", f"{r.total_weight_with_zinc:.2f}")
+        ws2.append([])
+
+        ws2.cell(row=ws2.max_row + 1, column=1,
+                  value="ЦЕНА КЛИЕНТУ").font = Font(bold=True, color="2E6B9E")
+        _row(f"Маржа {margin:.0f}%", "")
+        _row("Цена клиенту", f"{client_price:.2f} €", bold=True)
+
+        # ── Сохранить ────────────────────────────────────────────────────────
+        safe_client = "".join(c for c in client if c.isalnum() or c in " _-").strip()
+        default_name = f"{safe_client}_{date_str}.xlsx"
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile=default_name,
+        )
+        if not path:
+            return
+        try:
+            wb.save(path)
+            messagebox.showinfo("Готово", f"Файл сохранён:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить:\n{e}")
 
     def _save_order(self):
         if not hasattr(self, "_last_result"):
