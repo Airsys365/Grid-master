@@ -799,8 +799,10 @@ class ManagerApp(ctk.CTk):
         l2 = part.get("length2", 0) or 0
         size_str = (f"{part.get('length',0)}/{l2} × {part.get('width',0)} мм"
                     if l2 else f"{part.get('length',0)} × {part.get('width',0)} мм")
+        ai_frame = bool(part.get("frame_analysis", ""))
         has_override = bool(part.get("frame_override", 0) or part.get("bumper_override", 0))
-        ctk.CTkLabel(row, text=size_str + (" ✎" if has_override else ""), width=160).pack(side="left")
+        suffix = " 🤖" if (ai_frame and has_override) else (" ✎" if has_override else "")
+        ctk.CTkLabel(row, text=size_str + suffix, width=160).pack(side="left")
 
         # Количество + кнопка принять из спеки
         if has_conflict:
@@ -856,9 +858,11 @@ class ManagerApp(ctk.CTk):
         part = self.current_parts[idx]
         win = ctk.CTkToplevel(self)
         win.title("Редактировать позицию")
-        win.geometry("440x420")
+        has_ai_analysis = bool(part.get("frame_analysis", ""))
+        win_height = 560 if has_ai_analysis else 480
+        win.geometry(f"460x{win_height}")
         win.grab_set()
-        win.resizable(False, False)
+        win.resizable(False, True)
 
         # Поля без "Работа" — они рендерятся отдельно с кнопкой пересчёта
         fields = [
@@ -946,6 +950,19 @@ class ManagerApp(ctk.CTk):
                     self.current_parts.pop(idx)
                     self._populate_review()
             win.destroy()
+
+        # Блок анализа ИИ — показываем если есть
+        if has_ai_analysis:
+            ai_frame_ui = ctk.CTkFrame(win, border_width=1, corner_radius=6)
+            ai_frame_ui.pack(fill="x", padx=16, pady=(4, 0))
+            ctk.CTkLabel(ai_frame_ui, text="🤖 Анализ обрамления (ИИ):",
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         anchor="w").pack(fill="x", padx=8, pady=(6, 2))
+            ai_txt = ctk.CTkTextbox(ai_frame_ui, height=70, wrap="word",
+                                     font=ctk.CTkFont(size=11))
+            ai_txt.pack(fill="x", padx=8, pady=(0, 6))
+            ai_txt.insert("end", part.get("frame_analysis", ""))
+            ai_txt.configure(state="disabled")
 
         btn_row = ctk.CTkFrame(win, fg_color="transparent")
         btn_row.pack(pady=12)
